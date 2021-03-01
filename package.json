@@ -1,0 +1,21 @@
+{
+    "name": "photic-test-client",
+    "version": "1.0.0",
+    "description": "Test app to validate photic Fabric provisioning support",
+    "engines": {
+        "node": ">=12",
+        "npm": ">=5"
+    },
+    "engineStrict": true,
+    "author": "Kaleido",
+    "license": "Apache-2.0",
+    "dependencies": {
+        "axios": "^0.21.1",
+        "fabric-ca-client": "^2.2.5",
+        "fabric-network": "file://../fabric-sdk-node/fabric-network",
+        "fs-extra": "^9.0.1",
+        "hasbin": "^1.2.3",
+        "js-yaml": "^4.0.0",
+        "prompt-sync": "^4.2.0"
+    }
+}

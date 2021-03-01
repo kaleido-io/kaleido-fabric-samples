@@ -1,0 +1,11 @@
+pids
+*.pid
+*.seed
+*.pid.lock
+package-lock.json
+coverage
+node_modules/
+.npm
+.eslintcache
+.nyc_output
+.DS_Store
