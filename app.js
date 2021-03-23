@@ -15,6 +15,14 @@ const userId = process.env.USER_ID || 'user01';
 
 main();
 
+async function writeCAFile(config, membershipId) {
+  const fileName = join(__dirname, `tls`, `${membershipId}.pem`);
+  const caId = config.organizations[membershipId].certificateAuthorities[0];
+  const pem = config.certificateAuthorities[caId].tlsCACerts.pem[0];
+  await fs.writeFile(fileName, pem);
+  return fileName;
+}
+
 async function main() {
   const kclient = new KaleidoClient(userId);
   await kclient.init();
@@ -41,14 +49,15 @@ async function main() {
       '--name', chaincodeName,
       '-o', `${config.orderers[myOrderer].url}`,
       '--tls',
-      '--cafile', join(__dirname, 'lib/resources/kaleido-ca.pem'),
+      '--cafile', await writeCAFile(config, membership),
     ];
     for (let member of channel.members) {
+      if (!config.organizations[member]) continue;
       const memberPeer = config.organizations[member].peers[0];
       args.push('--peerAddresses');
       args.push(`${config.peers[memberPeer].url}`),
       args.push('--tlsRootCertFiles');
-      args.push(join(__dirname, 'lib/resources/kaleido-ca.pem'))
+      args.push(await writeCAFile(config, member))
     }
     if (isInit === 'y') {
       args.push('--isInit');
