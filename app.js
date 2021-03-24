@@ -6,9 +6,9 @@ const fs = require('fs-extra');
 const { join } = require('path');
 const prompt = require('prompt-sync')();
 const exec = require('child_process').spawn;
-const { Gateway } = require('fabric-network');
 const KaleidoClient = require('./lib/kaleido');
 const { handleOutput } = require('./lib/utils');
+const { KEYUTIL } = require('jsrsasign');
 
 const chaincodeName = process.env.CCNAME || 'asset_transfer';
 const userId = process.env.USER_ID || 'user01';
@@ -34,6 +34,12 @@ async function main() {
     process.env.CORE_PEER_LOCALMSPID = membership;
     const isInit = prompt('Calling "InitLedger" (y/n)? ');
     const myOrderer = config.organizations[membership].orderers[0];
+
+    const {
+      userKeyFilename,
+      userCertFilename,
+      caCertFilename,
+    } = await kclient.getUserCertFiles();
     const args = [
       'chaincode',
       'invoke',
@@ -41,14 +47,18 @@ async function main() {
       '--name', chaincodeName,
       '-o', `${config.orderers[myOrderer].url}`,
       '--tls',
-      '--cafile', join(__dirname, 'lib/resources/kaleido-ca.pem'),
+      '--clientauth',
+      '--cafile', caCertFilename,
+      '--keyfile', userKeyFilename,
+      '--certfile', userCertFilename,
     ];
     for (let member of channel.members) {
+      if (!config.organizations[member]) continue;
       const memberPeer = config.organizations[member].peers[0];
       args.push('--peerAddresses');
       args.push(`${config.peers[memberPeer].url}`),
       args.push('--tlsRootCertFiles');
-      args.push(join(__dirname, 'lib/resources/kaleido-ca.pem'))
+      args.push(await kclient.getCertFile(member))
     }
     if (isInit === 'y') {
       args.push('--isInit');
@@ -64,7 +74,16 @@ async function main() {
       'peer',
       args,
       {
-        cwd: kclient.userConfigDir
+        cwd: kclient.userConfigDir,
+        env: {
+          PATH: process.env.PATH,
+          CORE_PEER_LOCALMSPID: membership,
+          CORE_PEER_TLS_ENABLED: true,
+          CORE_PEER_TLS_CLIENTAUTHREQUIRED: true,
+          CORE_PEER_TLS_ROOTCERT_FILE: caCertFilename,
+          CORE_PEER_TLS_CLIENTCERT_FILE: userCertFilename,
+          CORE_PEER_TLS_CLIENTKEY_FILE: userKeyFilename,
+        }
       }
     );
     await handleOutput(cmd);

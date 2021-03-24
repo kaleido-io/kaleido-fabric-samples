@@ -12,10 +12,11 @@
     "dependencies": {
         "axios": "^0.21.1",
         "fabric-ca-client": "^2.2.5",
-        "fabric-network": "file://../fabric-sdk-node/fabric-network",
+        "fabric-network": "^2.2.5",
         "fs-extra": "^9.0.1",
         "hasbin": "^1.2.3",
         "js-yaml": "^4.0.0",
+        "jsrsasign": "^10.1.13",
         "prompt-sync": "^4.2.0"
     }
 }
