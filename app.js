@@ -6,7 +6,6 @@ const fs = require('fs-extra');
 const { join } = require('path');
 const prompt = require('prompt-sync')();
 const exec = require('child_process').spawn;
-const { Gateway } = require('fabric-network');
 const KaleidoClient = require('./lib/kaleido');
 const { handleOutput } = require('./lib/utils');
 
@@ -20,6 +19,20 @@ async function writeCAFile(config, membershipId) {
   const caId = config.organizations[membershipId].certificateAuthorities[0];
   const pem = config.certificateAuthorities[caId].tlsCACerts.pem[0];
   await fs.writeFile(fileName, pem);
+  return fileName;
+}
+
+async function writeCertFile(kclient, username) {
+  const wallet = await kclient.wallet.get(username);
+  const fileName = join(__dirname, `tls`, `${username}.pem`);
+  await fs.writeFile(fileName, wallet.credentials.certificate);
+  return fileName;
+}
+
+async function writeKeyFile(kclient, username) {
+  const wallet = await kclient.wallet.get(username);
+  const fileName = join(__dirname, `tls`, `${username}.key`);
+  await fs.writeFile(fileName, wallet.credentials.privateKey);
   return fileName;
 }
 
@@ -42,6 +55,9 @@ async function main() {
     process.env.CORE_PEER_LOCALMSPID = membership;
     const isInit = prompt('Calling "InitLedger" (y/n)? ');
     const myOrderer = config.organizations[membership].orderers[0];
+    const userKeyfile = await writeKeyFile(kclient, 'user01');
+    const userCertfile = await writeCertFile(kclient, 'user01');
+    const caFile = await writeCAFile(config, membership);
     const args = [
       'chaincode',
       'invoke',
@@ -49,7 +65,10 @@ async function main() {
       '--name', chaincodeName,
       '-o', `${config.orderers[myOrderer].url}`,
       '--tls',
-      '--cafile', await writeCAFile(config, membership),
+      '--clientauth',
+      '--cafile', caFile,
+      '--keyfile', userKeyfile,
+      '--certfile', userCertfile,
     ];
     for (let member of channel.members) {
       if (!config.organizations[member]) continue;
@@ -73,7 +92,16 @@ async function main() {
       'peer',
       args,
       {
-        cwd: kclient.userConfigDir
+        cwd: kclient.userConfigDir,
+        env: {
+          PATH: process.env.PATH,
+          CORE_PEER_LOCALMSPID: membership,
+          CORE_PEER_TLS_ENABLED: true,
+          CORE_PEER_TLS_CLIENTAUTHREQUIRED: true,
+          CORE_PEER_TLS_ROOTCERT_FILE: caFile,
+          CORE_PEER_TLS_CLIENTCERT_FILE: userCertfile,
+          CORE_PEER_TLS_CLIENTKEY_FILE: userKeyfile,
+        }
       }
     );
     await handleOutput(cmd);
