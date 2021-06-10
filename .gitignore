@@ -5,4 +5,3 @@ node_modules/
 .eslintcache
 .nyc_output
 .DS_Store
-.vscode

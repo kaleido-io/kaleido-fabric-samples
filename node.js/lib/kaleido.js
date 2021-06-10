@@ -41,7 +41,7 @@ class KaleidoClient {
 
     this.wallet = new UserWallet(this.walletDir, this.myMembership);
     await this.wallet.init();
-    const user = await this.wallet.getUser(this.userId);
+    let user = await this.wallet.getUser(this.userId);
     if (!user) {
       const secret = await this.registerNewUser();
       user = await this.wallet.newUser(this.userId, secret, this.cas[this.myMembership].url);

@@ -25,8 +25,7 @@ class UserWallet {
 
   async newUser(userId, secret, caUrl) {
     const { csrPEM, keyPEM } = await this.generateCSR(userId);
-    const caCertPEM = fs.readFileSync(join(__dirname, 'resources/kaleido-ca.pem')).toString();
-    const caClient = new FabricCAClient(`${caUrl}:443`, { trustedRoots: [caCertPEM], verify: false });
+    const caClient = new FabricCAClient(`${caUrl}:443`, { verify: false });
     const result = await caClient.enroll({
       enrollmentID: userId,
       enrollmentSecret: secret,
