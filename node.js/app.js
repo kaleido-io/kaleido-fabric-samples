@@ -1,17 +1,13 @@
 'use strict';
 
-process.env.HFC_LOGGING='{"info":"console","error":"console"}';
-const hasbin = require('hasbin');
-const fs = require('fs-extra');
-const { join } = require('path');
 const prompt = require('prompt-sync')();
-const exec = require('child_process').spawn;
 const KaleidoClient = require('./lib/kaleido');
-const { handleOutput } = require('./lib/utils');
-const { KEYUTIL } = require('jsrsasign');
+const { Gateway } = require('fabric-network');
+const Client = require('fabric-common');
 
 const chaincodeName = process.env.CCNAME || 'asset_transfer';
 const userId = process.env.USER_ID || 'user01';
+const useDiscovery = process.env.USE_DISCOVERY || 'false';
 
 main();
 
@@ -19,75 +15,44 @@ async function main() {
   const kclient = new KaleidoClient(userId);
   await kclient.init();
 
-  const membership = kclient.myMembership;
-  const config = kclient.config;
-  const channel = kclient.channel;
-
+  const gateway = new Gateway();
   try {
-    if (!hasbin.sync('peer')) {
-      console.error('Must add "peer" command to system path');
-      process.exit(1);
-    }
+    // setup the gateway instance
+    // The user will now be able to create connections to the fabric network and be able to
+    // submit transactions and query. All transactions submitted by this gateway will be
+    // signed by this user using the credentials stored in the wallet.
+    await gateway.connect(kclient.config, {
+      wallet: kclient.wallet.wallet,
+      identity: userId,
+      clientTlsIdentity: userId,
+      discovery: { enabled: useDiscovery === 'true', asLocalhost: false }
+    });
 
-    process.env.FABRIC_CFG_PATH = kclient.userConfigDir;
-    process.env.CORE_PEER_TLS_ENABLED = true;
-    process.env.CORE_PEER_LOCALMSPID = membership;
+    // Build a network instance based on the channel where the smart contract is deployed
+    const network = await gateway.getNetwork(kclient.channel.name);
+    const contract = network.getContract(chaincodeName);
+
     const isInit = prompt('Calling "InitLedger" (y/n)? ');
-    const myOrderer = config.organizations[membership].orderers[0];
-
-    const {
-      userKeyFilename,
-      userCertFilename,
-      caCertFilename,
-    } = await kclient.getUserCertFiles();
-    const args = [
-      'chaincode',
-      'invoke',
-      '--channelID', channel.name,
-      '--name', chaincodeName,
-      '-o', `${config.orderers[myOrderer].url}`,
-      '--tls',
-      '--clientauth',
-      '--cafile', caCertFilename,
-      '--keyfile', userKeyFilename,
-      '--certfile', userCertFilename,
-    ];
-    for (let member of channel.members) {
-      if (!config.organizations[member]) continue;
-      const memberPeer = config.organizations[member].peers[0];
-      args.push('--peerAddresses');
-      args.push(`${config.peers[memberPeer].url}`),
-      args.push('--tlsRootCertFiles');
-      args.push(await kclient.getCertFile(member))
-    }
+    let fcn, args;
     if (isInit === 'y') {
-      args.push('--isInit');
-      args.push('-c');
-      args.push('{"Args":["InitLedger"]}');
+      fcn = 'InitLedger';
+      args = [];
     } else {
-      const assetId = prompt('Id of asset to create: ');
-      args.push('-c');
-      args.push(`{"Args":["CreateAsset", "${assetId}", "yellow", "5", "Tom", "1300"]}`);
+      fcn = 'CreateAsset';
+      const assetId = `asset-${Math.floor(Math.random() * 1000000)}`;
+      console.log(`Generating a random asset ID to use to create a new asset: ${assetId}`);
+      args = [assetId, "yellow", "5", "Tom", "1300"];
     }
+    // Initialize a set of asset data on the channel using the chaincode 'InitLedger' function.
+    console.log(`\n--> Submitting Transaction. fcn: ${fcn}, args: ${args}`);
+    await contract.submitTransaction(fcn, ...args);
+    console.log('*** Result: committed');
 
-    let cmd = exec(
-      'peer',
-      args,
-      {
-        cwd: kclient.userConfigDir,
-        env: {
-          PATH: process.env.PATH,
-          CORE_PEER_LOCALMSPID: membership,
-          CORE_PEER_TLS_ENABLED: true,
-          CORE_PEER_TLS_CLIENTAUTHREQUIRED: true,
-          CORE_PEER_TLS_ROOTCERT_FILE: caCertFilename,
-          CORE_PEER_TLS_CLIENTCERT_FILE: userCertFilename,
-          CORE_PEER_TLS_CLIENTKEY_FILE: userKeyFilename,
-        }
-      }
-    );
-    await handleOutput(cmd);
-  } catch(err) {
-    console.error(err);
+  } catch (error) {
+		console.error(`******** FAILED to run the application: ${error.stack ? error.stack : error}`);
+	} finally {
+    // Disconnect from the gateway when the application is closing
+    // This will close all connections to the network
+    gateway.disconnect();
   }
 }

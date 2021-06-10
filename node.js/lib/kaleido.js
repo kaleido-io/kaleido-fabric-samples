@@ -5,9 +5,6 @@ const axios = require('axios');
 const { join } = require('path');
 const os = require('os');
 const fs = require('fs-extra');
-const { KEYUTIL, KJUR } = require('jsrsasign');
-const Key = require('fabric-common/lib/impl/ecdsa/key');
-const { Wallets } = require('fabric-network');
 const UserWallet = require('./wallet.js');
 
 class KaleidoClient {
@@ -35,12 +32,22 @@ class KaleidoClient {
     this.myMembership = own;
     this.channel = await this.locateChannel(consortium, environment, memberships);
     await this.locateFabricCAs(consortium, environment);
+    await this.locateOrderers(consortium, environment);
+    await this.locatePeers(consortium, environment);
 
-    this.userConfigDir = join(os.homedir(), 'fabric-test', this.myMembership, environment, this.userId);
-    this.memberCaDir = join(os.homedir(), 'fabric-test', this.myMembership, environment, 'membercas');
+    this.walletDir = join(os.homedir(), 'fabric-test', environment);
+    this.memberCaDir = join(os.homedir(), 'fabric-test', environment, this.myMembership, 'membercas');
     await fs.ensureDir(this.memberCaDir);
-    this.userMspPath = join(this.userConfigDir, 'msp');
-    this.wallet = await this.ensureUserWallet(consortium, environment, own);    
+
+    this.wallet = new UserWallet(this.walletDir, this.myMembership);
+    await this.wallet.init();
+    const user = await this.wallet.getUser(this.userId);
+    if (!user) {
+      const secret = await this.registerNewUser();
+      user = await this.wallet.newUser(this.userId, secret, this.cas[this.myMembership].url);
+    }
+    this.user = user;
+
     this.config = await this.buildNetworkConfig(consortium, environment, memberships);
   }
 
@@ -77,8 +84,12 @@ class KaleidoClient {
       for (let member of result.data) {
         console.log(`\t[${i++}] id: ${member._id}, name: ${member.org_name}`);
       }
-      const membershipId = prompt('Select membership to use to submit transactions: ');
-      membership = result.data[membershipId]._id;
+      if (process.env.MEMBERSHIP) {
+        membership = process.env.MEMBERSHIP;
+      } else {
+        const membershipId = prompt('Select membership to use to submit transactions: ');
+        membership = result.data[membershipId]._id;
+      }
     } else {
       console.log(`Found membership "${result.data[0].org_name}" (${result.data[0]._id})`);
       membership = result.data[0]._id;
@@ -110,13 +121,13 @@ class KaleidoClient {
     return env;
   }
   
-  async locateChannel(consortiumId, environmentId, memberships) {
+  async locateChannel(consortiumId, environmentId) {
     let result = await axios.get(`${this.kaleidoUrl}/c/${consortiumId}/e/${environmentId}/channels`, this.apiAuth);
     let ret;
     if (result.data.length === 0) {
       console.info(`No channels found in the environment ${environmentId}. The "default-channel" should have been created. Something went wrong in the environment. Exitting.`);
       process.exit(1);
-    } else if (result.data.length > 0) {
+    } else if (result.data.length > 1) {
       console.log('Found these channels:');
       const channels = result.data;
       let i = 0;
@@ -125,45 +136,10 @@ class KaleidoClient {
       }
       const channel = await prompt('Select channel: ');
       ret = channels[channel];
+    } else if (result.data.length === 1) {
+      ret = result.data[0];
     }
     return ret;
-  }
-
-  async getUserCertFiles() {
-    const user = (await this.wallet.list())[0];
-    const wallet = await this.wallet.get(user);
-    const keyObj = KEYUTIL.getKey(wallet.credentials.privateKey);
-    const key = new Key(keyObj);
-    const userKeyFilename = join(this.userMspPath, 'keystore', `${key.getSKI()}_sk`);
-    const userCertFilename = join(this.userMspPath, 'signcerts', `cert.pem`);
-    const caCertFilename = join(this.userMspPath, 'cacerts', `ca.pem`);
-    return {
-      userKeyFilename,
-      userCertFilename,
-      caCertFilename,
-    };
-  }
-
-  // a user wallet contains both MSP materials so it can be used with fabric commands (peer, osnadmin etc.)
-  // and a Wallet as designed by the fabric-network module
-  async ensureUserWallet() {
-    let wallet;
-    try {
-      fs.accessSync(this.userMspPath, fs.F_OK);
-      wallet = await Wallets.newFileSystemWallet(this.userConfigDir);
-    } catch(err) {
-      const caCertPEM = await this.getCACert();
-      const { csrPEM, keyPEM } = await this.generateCSR();
-      let certPEM, userwallet;
-      const secret = await this.registerNewUser();
-      userwallet = new UserWallet(this.userId);
-      certPEM = await userwallet.signCert(csrPEM, secret, this.cas[this.myMembership].url);  
-      userwallet.createMSPDir(this.userConfigDir, caCertPEM, keyPEM, certPEM, this.myMembership);
-      wallet = await userwallet.createUserWallet(this.userConfigDir, keyPEM, certPEM, this.myMembership);
-      console.log(`Created user ${this.userId} MSP materials in dir ${this.userConfigDir}`);
-    }
-    
-    return wallet;
   }
   
   async locateFabricCAs(consortiumId, envId) {
@@ -190,31 +166,56 @@ class KaleidoClient {
     }
   }
   
+  
+  async locateOrderers(consortiumId, envId) {
+    let result = await axios.get(`${this.kaleidoUrl}/c/${consortiumId}/e/${envId}/n`, this.apiAuth);
+    let orderers = {};
+    if (result.data.length === 0) {
+      console.error(`No orderers found in the environment ${envId}`);
+      throw new Error(`No orderers found in the environment ${envId}`)
+    } else {
+      console.log(`Found these orderers:`);
+      const orderers = result.data.filter(a => a.role === 'orderer');
+      this.orderers = orderers.map(orderer => {
+        console.log(`\tid: ${orderer._id}, name: ${orderer.name}`);
+        const {orgCA: caCertPEM} = JSON.parse(Buffer.from(orderer.node_identity_data, 'hex').toString());
+        return {
+          hostname: `${orderer.urls.orderer.slice('https://'.length)}`,
+          id: orderer._id,
+          membershipId: orderer.membership_id,
+          caCertPEM
+        };
+      })
+    }
+  }
+  
+  async locatePeers(consortiumId, envId) {
+    let result = await axios.get(`${this.kaleidoUrl}/c/${consortiumId}/e/${envId}/n`, this.apiAuth);
+    let peer;
+    if (result.data.length === 0) {
+      console.error(`No peers found in the environment ${envId}`);
+      process.exit(1);
+    } else {
+      console.log(`Found these peers:`);
+      const peers = result.data.filter(a => a.role === 'peer');
+      this.peers = peers.map(peer => {
+        console.log(`\tid: ${peer._id}, name: ${peer.name}`);
+        const {orgCA: caCertPEM} = JSON.parse(Buffer.from(peer.node_identity_data, 'hex').toString());
+        return {
+          hostname: `${peer.urls.peer.slice('https://'.length)}`,
+          id: peer._id,
+          membershipId: peer.membership_id,
+          caCertPEM
+        };
+      });
+    }
+  }
+
   async getCACert() {
     const result = await axios.get(`${this.kaleidoUrl}/fabric-ca/${this.cas[this.myMembership].id}/cacert`, this.apiAuth);
     return result.data.cert;
   }
   
-  async generateCSR() {
-    let subject = `/C=US/L=Raleigh/O=Kaleido/OU=admin/CN=${this.userId}`;
-    const alg = 'EC';
-    const keylenOrCurve = "secp256r1";
-    const sigalgName = 'SHA256withECDSA';
-    let keypair = KEYUTIL.generateKeypair(alg, keylenOrCurve);
-  
-    let options = {
-      sigalg: sigalgName,
-      subject: {str: subject},
-      sbjpubkey: keypair.pubKeyObj,
-      sbjprvkey: keypair.prvKeyObj
-    };
-  
-    let csrPEM = KJUR.asn1.csr.CSRUtil.newCSRPEM(options);
-    let keyPEM = KEYUTIL.getPEM(keypair.prvKeyObj, "PKCS8PRV");
-  
-    return { csrPEM, keyPEM };
-  }
-
   async registerNewUser() {
     let result = await axios.post(`${this.kaleidoUrl}/fabric-ca/${this.cas[this.myMembership].id}/register`, {
       registrations: [{
@@ -244,9 +245,17 @@ class KaleidoClient {
         connection: {
           timeout: {
             peer: {
-              endorser: '300'
-            }
+              endorser: 30,
+              committer: 30
+            },
+            orderer: 30
           }
+        }
+      },
+      channels: {
+        [this.channel.name]: {
+          orderers:[],
+          peers: []
         }
       },
       organizations: {},
@@ -254,106 +263,51 @@ class KaleidoClient {
       orderers: {},
       certificateAuthorities: {}
     };
+    for (let membership of this.channel.members) {
+      const orderers = this.orderers.filter(orderer => orderer.membershipId === membership);
+      config.channels[this.channel.name].orderers = config.channels[this.channel.name].orderers.concat(orderers.map(o => o.id));
+
+      const peers = this.peers.filter(peer => peer.membershipId === membership);
+      config.channels[this.channel.name].peers = config.channels[this.channel.name].peers.concat(peers.map(p => p.id));
+    }
     for (let membership of memberships) {
-      try {
-        const membershipId = membership._id;
-        const {url: ordererUrl, id: ordererId, caCertPEM} = await this.locateOrderer(consortiumId, envId, membershipId);
-        const {url: peerUrl, id: peerId} = await this.locatePeer(consortiumId, envId, membershipId);
-        config.organizations[membershipId] = {
-          mspid: membershipId,
-          peers: [ peerId ],
-          orderers: [ ordererId ],
-          certificateAuthorities: [this.cas[membershipId].id]
-        };
-        config.peers[peerId] = {
-          url: peerUrl,
-          tlsCACerts: {
-            pem: caCertPEM
-          }
-        };
-        config.orderers[ordererId] = {
-          url: ordererUrl,
-          tlsCACerts: {
-            pem: caCertPEM
-          }
-        };
-        config.certificateAuthorities[this.cas[membershipId].id] = {
-          url: this.cas[membershipId].url,
-          caName: "",
-          tlsCACerts: {
-            pem: [caCertPEM]
-          },
-          httpOptions: {
-            verify: false
-          }
+      const membershipId = membership._id;
+      config.organizations[membershipId] = {
+        mspid: membershipId,
+        peers: this.peers.filter(p => p.membershipId === membershipId).map(p => p.id),
+        orderers: this.orderers.filter(o => o.membershipId === membershipId).map(o => o.id),
+        certificateAuthorities: [this.cas[membershipId].id]
+      };
+    }
+    for (let peer of this.peers) {
+      config.peers[peer.id] = {
+        url: `grpcs://${peer.hostname}:443`,
+        tlsCACerts: {
+          pem: peer.caCertPEM
         }
       }
-      catch(err) {
-        console.log(`Skipping membership '${membership.name}' [${membership._id}]: ${err}`);
+    }
+    for (let orderer of this.orderers) {
+      config.orderers[orderer.id] = {
+        url: `grpcs://${orderer.hostname}:443`,
+        tlsCACerts: {
+          pem: orderer.caCertPEM
+        }
       }
     }
+    // config.certificateAuthorities[this.cas[membershipId].id] = {
+    //   url: this.cas[membershipId].url,
+    //   caName: "",
+    //   tlsCACerts: {
+    //     pem: [caCertPEM]
+    //   },
+    //   httpOptions: {
+    //     verify: false
+    //   }
+    // }
+
+    console.log(JSON.stringify(config, null, 2));
     return config;
-  }
-  
-  async locateOrderer(consortiumId, envId, membershipId) {
-    let result = await axios.get(`${this.kaleidoUrl}/c/${consortiumId}/e/${envId}/n`, this.apiAuth);
-    let orderer;
-    if (result.data.length === 0) {
-      console.error(`No orderers found in the environment ${envId}`);
-      throw new Error(`No orderers found in the environment ${envId}`)
-    } else if (result.data.length >= 1) {
-      console.log(`Found these orderers for the membership:`);
-      const orderersForMembership = result.data.filter(a => a.membership_id === membershipId && a.role === 'orderer');
-      let i = 0;
-      for (let orderer of orderersForMembership) {
-        console.log(`\t[${i++}] id: ${orderer._id}, name: ${orderer.name}`);
-      }
-      if (orderersForMembership.length === 0) {
-        throw new Error(`No orderers found for the membership ${membershipId}`)
-      } else if (orderersForMembership.length > 1) {
-        const ordererIdx = prompt('Select orderer: ');
-        orderer = orderersForMembership[ordererIdx];
-      } else {
-        console.log(`Found orderer for the membership: ${orderersForMembership[0]._id}`);
-        orderer = orderersForMembership[0];
-      }
-    }
-    const {orgCA: caCertPEM} = JSON.parse(Buffer.from(orderer.node_identity_data, 'hex').toString());
-    return {
-      url: `${orderer.urls.orderer.slice('https://'.length)}:443`,
-      id: orderer._id,
-      caCertPEM
-    };
-  }
-  
-  async locatePeer(consortiumId, envId, membershipId) {
-    let result = await axios.get(`${this.kaleidoUrl}/c/${consortiumId}/e/${envId}/n`, this.apiAuth);
-    let peer;
-    if (result.data.length === 0) {
-      console.error(`No peers found in the environment ${envId}`);
-      process.exit(1);
-    } else if (result.data.length >= 1) {
-      console.log(`Found these peers for the membership:`);
-      const peersForMembership = result.data.filter(a => a.membership_id === membershipId && a.role === 'peer');
-      let i = 0;
-      for (let peer of peersForMembership) {
-        console.log(`\t[${i++}] id: ${peer._id}, name: ${peer.name}`);
-      }
-      if (peersForMembership.length === 0) {
-        console.error(`No peers found for the membership ${membershipId}`);
-        process.exit(1);
-      } else if (peersForMembership.length > 1) {
-        const peerIdx = prompt('Select peer: ');
-        peer = peersForMembership[peerIdx];
-      } else {
-        console.log(`Found peer for the membership: ${peersForMembership[0]._id}`);
-        peer = peersForMembership[0];
-      }
-    }
-    return {
-      url: `${peer.urls.peer.slice('https://'.length)}:443`,
-      id: peer._id
-    };
   }
 }
 

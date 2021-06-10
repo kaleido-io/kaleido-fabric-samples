@@ -2,68 +2,68 @@
 
 const fs = require('fs-extra');
 const { join } = require('path');
-const { KEYUTIL } = require('jsrsasign');
+const { KEYUTIL, KJUR } = require('jsrsasign');
 const YAML = require('js-yaml');
 const FabricCAClient = require('fabric-ca-client');
 const { Wallets } = require('fabric-network');
 const Key = require('fabric-common/lib/impl/ecdsa/key');
 
 class UserWallet {
-  constructor(userId) {
-    this.userId = userId;
+  constructor(rootdir, membershipId) {
+    this.rootdir = rootdir;
+    this.membershipId = membershipId;
   }
 
-  async signCert(csrPEM, secret, caUrl) {
+  async init() {
+    this.wallet = await Wallets.newFileSystemWallet(join(this.rootdir, this.membershipId));
+  }
+
+  async getUser(userId) {
+		// Check to see if we've already enrolled the admin user.
+		return await this.wallet.get(userId);
+  }
+
+  async newUser(userId, secret, caUrl) {
+    const { csrPEM, keyPEM } = await this.generateCSR(userId);
     const caCertPEM = fs.readFileSync(join(__dirname, 'resources/kaleido-ca.pem')).toString();
     const caClient = new FabricCAClient(`${caUrl}:443`, { trustedRoots: [caCertPEM], verify: false });
     const result = await caClient.enroll({
-      enrollmentID: this.userId,
+      enrollmentID: userId,
       enrollmentSecret: secret,
       csr: csrPEM
     });
-    return result.certificate;
+    const certPEM = result.certificate;
+    const identity = {
+      credentials: {
+        certificate: certPEM,
+        privateKey: keyPEM
+      },
+      mspId: this.membershipId,
+      type: 'X.509'
+    };
+    await this.wallet.put(userId, identity);
+    console.log(`Successfully enrolled user ${userId} and saved to ${this.rootdir}`);
+    return identity;
   }
 
-  async createMSPDir(rootdir, caCertPEM, keyPEM, certPEM, membershipId) {
-    fs.ensureDirSync(join(rootdir, 'msp/cacerts'));
-    fs.ensureDirSync(join(rootdir, 'msp/tlscacerts'));
-    fs.ensureDirSync(join(rootdir, 'msp/signcerts'));
-    fs.ensureDirSync(join(rootdir, 'msp/keystore'));
-    fs.ensureDirSync(join(rootdir, 'tls'));
-    fs.writeFileSync(join(rootdir, 'msp/cacerts/ca.pem'), caCertPEM);
-    fs.writeFileSync(join(rootdir, 'msp/tlscacerts/ca.pem'), caCertPEM);
-    fs.writeFileSync(join(rootdir, 'msp/signcerts/cert.pem'), certPEM);
-    fs.writeFileSync(join(rootdir, 'tls/ca.crt'), caCertPEM);
-    const keyObj = KEYUTIL.getKey(keyPEM);
-    const key = new Key(keyObj);
-    const keyFilename = `${key.getSKI()}_sk`;
-    fs.writeFileSync(join(rootdir, 'msp/keystore', keyFilename), keyPEM);
-    const config = await YAML.load(fs.readFileSync(join(__dirname, 'resources/core.yaml')));
-    config.peer.tls.enabled = true;
-    config.peer.localMspId = membershipId;
-    const yaml = YAML.dump(config, { noRefs: true });
-    fs.writeFileSync(join(rootdir, 'core.yaml'), yaml);
-    fs.copyFileSync(join(__dirname, 'resources/config.yaml'), join(rootdir, 'msp/config.yaml'));
-  }
-
-  async createUserWallet(rootdir, keyPEM, certPEM, membershipId) {
-    const wallet = await Wallets.newFileSystemWallet(rootdir);
-    const userIdentity = await wallet.get(this.userId);
-    if (!userIdentity) {
-      const identity = {
-        credentials: {
-          certificate: certPEM,
-          privateKey: keyPEM
-        },
-        mspId: membershipId,
-        type: 'X.509'
-      };
-      await wallet.put(this.userId, identity);
-      console.log(`Created user wallet ${this.userId} and saved to ${rootdir}`);
-    } else {
-      console.log(`Loaded user wallet ${this.userId} from disk`);
-    }
-    return wallet;
+  async generateCSR(userId) {
+    let subject = `/C=US/L=Raleigh/O=Kaleido/OU=admin/CN=${userId}`;
+    const alg = 'EC';
+    const keylenOrCurve = "secp256r1";
+    const sigalgName = 'SHA256withECDSA';
+    let keypair = KEYUTIL.generateKeypair(alg, keylenOrCurve);
+  
+    let options = {
+      sigalg: sigalgName,
+      subject: {str: subject},
+      sbjpubkey: keypair.pubKeyObj,
+      sbjprvkey: keypair.prvKeyObj
+    };
+  
+    let csrPEM = KJUR.asn1.csr.CSRUtil.newCSRPEM(options);
+    let keyPEM = KEYUTIL.getPEM(keypair.prvKeyObj, "PKCS8PRV");
+  
+    return { csrPEM, keyPEM };
   }
 }
 
