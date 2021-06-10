@@ -1,3 +1,0 @@
-{
-    "extends": "./node_modules/@photic/utils/eslint-config-photic.js"
-}
