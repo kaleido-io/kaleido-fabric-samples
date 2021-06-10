@@ -1,3 +1,18 @@
+/*
+ * Copyright 2021 Kaleido
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 'use strict';
 
 const prompt = require('prompt-sync')();
@@ -210,11 +225,6 @@ class KaleidoClient {
       });
     }
   }
-
-  async getCACert() {
-    const result = await axios.get(`${this.kaleidoUrl}/fabric-ca/${this.cas[this.myMembership].id}/cacert`, this.apiAuth);
-    return result.data.cert;
-  }
   
   async registerNewUser() {
     let result = await axios.post(`${this.kaleidoUrl}/fabric-ca/${this.cas[this.myMembership].id}/register`, {
@@ -228,14 +238,6 @@ class KaleidoClient {
       process.exit(1);
     }
     return result.data.registrations[0].enrollmentSecret;
-  }
-
-  async getCertFile(membershipId) {
-    const fileName = join(this.memberCaDir, `${membershipId}.pem`);
-    const caId = this.config.organizations[membershipId].certificateAuthorities[0];
-    const pem = this.config.certificateAuthorities[caId].tlsCACerts.pem[0];
-    await fs.writeFile(fileName, pem);
-    return fileName;
   }
   
   async buildNetworkConfig(consortiumId, envId, memberships) {
@@ -295,16 +297,6 @@ class KaleidoClient {
         }
       }
     }
-    // config.certificateAuthorities[this.cas[membershipId].id] = {
-    //   url: this.cas[membershipId].url,
-    //   caName: "",
-    //   tlsCACerts: {
-    //     pem: [caCertPEM]
-    //   },
-    //   httpOptions: {
-    //     verify: false
-    //   }
-    // }
 
     console.log(JSON.stringify(config, null, 2));
     return config;
