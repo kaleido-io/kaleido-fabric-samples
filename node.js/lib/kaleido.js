@@ -31,9 +31,9 @@ class KaleidoClient {
     const { own, all: memberships } = await this.locateMembership(consortium);
     this.myMembership = own;
     this.channel = await this.locateChannel(consortium, environment, memberships);
-    await this.locateFabricCAs(consortium, environment);
-    await this.locateOrderers(consortium, environment);
-    await this.locatePeers(consortium, environment);
+    await this.locateFabricCAs(consortium, environment, memberships);
+    await this.locateOrderers(consortium, environment, memberships);
+    await this.locatePeers(consortium, environment, memberships);
 
     this.walletDir = join(os.homedir(), 'fabric-test', environment);
     this.memberCaDir = join(os.homedir(), 'fabric-test', environment, this.myMembership, 'membercas');
@@ -82,7 +82,8 @@ class KaleidoClient {
       console.log('Found these memberships:');
       let i = 0;
       for (let member of result.data) {
-        console.log(`\t[${i++}] id: ${member._id}, name: ${member.org_name}`);
+        member.shortname = member.org_name.toLowerCase();
+        console.log(`\t[${i++}] id: ${member._id}, name: ${member.shortname}`);
       }
       if (process.env.MEMBERSHIP) {
         membership = process.env.MEMBERSHIP;
@@ -96,7 +97,7 @@ class KaleidoClient {
     }
     return {
       own: membership,
-      all: result.data
+      all: result.data.filter(m => m.shortname !== 'avaneer2')
     };
   }
   
@@ -142,7 +143,7 @@ class KaleidoClient {
     return ret;
   }
   
-  async locateFabricCAs(consortiumId, envId) {
+  async locateFabricCAs(consortiumId, envId, all) {
     let result = await axios.get(`${this.kaleidoUrl}/c/${consortiumId}/e/${envId}/s`, this.apiAuth);
     if (result.data.length === 0) {
       console.error(`No services found in the environment ${envId}`);
@@ -157,8 +158,10 @@ class KaleidoClient {
         this.cas = {};
         for (let ca of fabcas) {
           console.log(`\tid: ${ca._id}, membership: ${ca.membership_id}`);
+          const membership = all.filter(m => m._id === ca.membership_id)[0];
+          console.log(`${JSON.stringify(ca)}`);
           this.cas[ca.membership_id] = {
-            url: ca.urls.http,
+            url: `https://${membership.shortname}-ca.api-dev.healthutilitynetwork.org`,
             id: ca._id
           };
         }
@@ -167,7 +170,7 @@ class KaleidoClient {
   }
   
   
-  async locateOrderers(consortiumId, envId) {
+  async locateOrderers(consortiumId, envId, all) {
     let result = await axios.get(`${this.kaleidoUrl}/c/${consortiumId}/e/${envId}/n`, this.apiAuth);
     let orderers = {};
     if (result.data.length === 0) {
@@ -178,9 +181,10 @@ class KaleidoClient {
       const orderers = result.data.filter(a => a.role === 'orderer');
       this.orderers = orderers.map(orderer => {
         console.log(`\tid: ${orderer._id}, name: ${orderer.name}`);
+        const membership = all.filter(m => m._id === orderer.membership_id)[0];
         const {orgCA: caCertPEM} = JSON.parse(Buffer.from(orderer.node_identity_data, 'hex').toString());
         return {
-          hostname: `${orderer.urls.orderer.slice('https://'.length)}`,
+          hostname: `${membership.shortname}-orderer.api-dev.healthutilitynetwork.org`,
           id: orderer._id,
           membershipId: orderer.membership_id,
           caCertPEM
@@ -189,7 +193,7 @@ class KaleidoClient {
     }
   }
   
-  async locatePeers(consortiumId, envId) {
+  async locatePeers(consortiumId, envId, all) {
     let result = await axios.get(`${this.kaleidoUrl}/c/${consortiumId}/e/${envId}/n`, this.apiAuth);
     let peer;
     if (result.data.length === 0) {
@@ -200,9 +204,10 @@ class KaleidoClient {
       const peers = result.data.filter(a => a.role === 'peer');
       this.peers = peers.map(peer => {
         console.log(`\tid: ${peer._id}, name: ${peer.name}`);
+        const membership = all.filter(m => m._id === peer.membership_id)[0];
         const {orgCA: caCertPEM} = JSON.parse(Buffer.from(peer.node_identity_data, 'hex').toString());
         return {
-          hostname: `${peer.urls.peer.slice('https://'.length)}`,
+          hostname: `${membership.shortname}-peer.api-dev.healthutilitynetwork.org`,
           id: peer._id,
           membershipId: peer.membership_id,
           caCertPEM
