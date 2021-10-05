@@ -5,6 +5,7 @@ const axios = require('axios');
 const { join } = require('path');
 const os = require('os');
 const fs = require('fs-extra');
+const dns = require('dns');
 const UserWallet = require('./wallet.js');
 
 class KaleidoClient {
@@ -250,10 +251,10 @@ class KaleidoClient {
         connection: {
           timeout: {
             peer: {
-              endorser: 30,
-              committer: 30
+              endorser: 60,
+              committer: 60
             },
-            orderer: 30
+            orderer: 60
           }
         }
       },
@@ -299,6 +300,12 @@ class KaleidoClient {
           pem: orderer.caCertPEM
         }
       }
+
+      dns.resolve4(orderer.hostname, (err, addresses) => {
+        if (err) return;
+
+        console.log(`addresses: ${JSON.stringify(addresses)}`);
+      });
     }
     // config.certificateAuthorities[this.cas[membershipId].id] = {
     //   url: this.cas[membershipId].url,

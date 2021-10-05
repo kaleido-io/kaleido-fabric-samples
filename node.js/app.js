@@ -24,7 +24,6 @@ async function main() {
     await gateway.connect(kclient.config, {
       wallet: kclient.wallet.wallet,
       identity: userId,
-      clientTlsIdentity: userId,
       discovery: { enabled: useDiscovery === 'true', asLocalhost: false }
     });
 
