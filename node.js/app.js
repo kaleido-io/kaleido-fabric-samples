@@ -32,21 +32,28 @@ async function main() {
     const network = await gateway.getNetwork(kclient.channel.name);
     const contract = network.getContract(chaincodeName);
 
-    const isInit = prompt('Calling "InitLedger" (y/n)? ');
-    let fcn, args;
-    if (isInit === 'y') {
-      fcn = 'InitLedger';
-      args = [];
+    let isInit;
+    if (process.env.IS_INIT) {
+      isInit = process.env.IS_INIT;
     } else {
-      fcn = 'CreateAsset';
-      const assetId = `asset-${Math.floor(Math.random() * 1000000)}`;
-      console.log(`Generating a random asset ID to use to create a new asset: ${assetId}`);
-      args = [assetId, "yellow", "5", "Tom", "1300"];
+      isInit = prompt('Calling "InitLedger" (y/n)? ');
     }
-    // Initialize a set of asset data on the channel using the chaincode 'InitLedger' function.
-    console.log(`\n--> Submitting Transaction. fcn: ${fcn}, args: ${args}`);
-    await contract.submitTransaction(fcn, ...args);
-    console.log('*** Result: committed');
+    for (let i = 0; i < 1000; i++) {
+      let fcn, args;
+      if (isInit === 'y') {
+        fcn = 'InitLedger';
+        args = [];
+      } else {
+        fcn = 'CreateAsset';
+        const assetId = `asset-${Math.floor(Math.random() * 1000000)}`;
+        console.log(`Generating a random asset ID to use to create a new asset: ${assetId}`);
+        args = [assetId, "yellow", "5", "Tom", "1300"];
+      }
+      // Initialize a set of asset data on the channel using the chaincode 'InitLedger' function.
+      console.log(`\n--> Submitting Transaction. fcn: ${fcn}, args: ${args}`);
+      await contract.submitTransaction(fcn, ...args);
+      console.log('*** Result: committed');
+    }
 
   } catch (error) {
 		console.error(`******** FAILED to run the application: ${error.stack ? error.stack : error}`);
