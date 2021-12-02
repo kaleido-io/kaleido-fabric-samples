@@ -159,7 +159,11 @@ func BuildConfig(kn *kaleido.KaleidoNetwork) (map[string]interface{}, error) {
 		fmt.Println(err)
 		return nil, err
 	}
-	tlsCACerts["path"] = path.Join(currentdir, "resources/kaleido_ca.pem")
+	kaledioCACert := os.Getenv("KALEIDO_CA_CERT")
+	if kaledioCACert == "" {
+		kaledioCACert = "resources/kaleido_ca.pem"
+	}
+	tlsCACerts["path"] = path.Join(currentdir, kaledioCACert)
 	myCA["tlsCACerts"] = tlsCACerts
 	certAuthorities[kn.MyCA.MembershipID] = myCA
 	m["certificateAuthorities"] = certAuthorities
