@@ -192,6 +192,7 @@ func downloadCACert(urlString, fileName string) error {
 	}
 	conn, err := tls.Dial("tcp", fmt.Sprintf("%s:%s", u.Host, port), &tls.Config{})
 	if err == nil {
+		defer conn.Close()
 		err = conn.Handshake()
 	}
 	if err != nil {
