@@ -14,10 +14,12 @@ Required environment variables:
 - `APIKEY`: Kaleido API key created in your account's profile
 
 Optional environment variables:
-- `KALEIDO_URL`: the root URL for the Kaleido API endpoints. Default is `https://console.kaleido.io`
+- `KALEIDO_URL`: the root URL for the Kaleido API endpoints. Default is `https://console.kaleido.io/api/v1`
 - `USER_ID`: name of the user to register and enroll with the Fabric CA service, to be used to submit transactions. Default is `user01`
 - `CCNAME`: name of the chaincode to invoke. Default is `asset_transfer`
 - `INIT_CC`: whether this run is to initialize the chaincode (if the chaincode has been deployed with the `--init-required` parameter). Default is `false`
+- `CONSORTIUM`: Kaleido consortium ID. If not supplied, you will be prompted for the consortium you are a member of
+- `ENVIRONMENT`: Kaleido environment ID. If not supplied, you will be prompted for the environment
 - `SUBMITTER`: Kaleido membership ID to use when registering and enrolling the transaction signing identity. If not supplied, you will be prompted for the membership if you own more than one in the consortium
 - `TX_COUNT`: number of transactions to submit in parallel. Default is `1`
 - `BATCHES`: number of batches, each batch having `TX_COUNT` transaction submissions, to submit in sequence, with a 30 seconds delay in between

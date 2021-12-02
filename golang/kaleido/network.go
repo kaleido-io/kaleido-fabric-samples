@@ -64,11 +64,25 @@ func (kn *KaleidoNetwork) selectConsortium() {
 		}
 	}
 
-	if len(liveConsortiums) > 1 {
+	requestedConsortium := os.Getenv("CONSORTIUM")
+	if len(liveConsortiums) == 0 {
+		fmt.Printf("No consortium found using URL\n")
+		os.Exit(1)
+	} else if requestedConsortium != "" {
+		for _, consortium := range consortiums {
+			if consortium.ID == requestedConsortium {
+				targetCon = consortium
+			}
+		}
+		if targetCon.ID != requestedConsortium {
+			fmt.Printf("No consortium found matching id=%s\n", requestedConsortium)
+			os.Exit(1)
+		}
+	} else if len(liveConsortiums) > 1 {
 		reader := bufio.NewReader(os.Stdin)
 		fmt.Println("Select the target consortium:")
 		for i, con := range liveConsortiums {
-			fmt.Printf("\t[%v] %v (%v)\n", i, con.Name, con.State)
+			fmt.Printf("\t[%v] %v (%v,id=%s)\n", i, con.Name, con.State, con.ID)
 		}
 
 		for {
@@ -100,12 +114,26 @@ func (kn *KaleidoNetwork) selectEnvironment() {
 	}
 	liveEnvs := []kld.Environment{}
 	for _, env := range envs {
-		if env.State != "deleted" {
+		if env.State != "deleted" && env.Provider == "fabric" {
 			liveEnvs = append(liveEnvs, env)
 		}
 	}
 
-	if len(liveEnvs) > 1 {
+	requestedEnvironment := os.Getenv("ENVIRONMENT")
+	if len(liveEnvs) == 0 {
+		fmt.Printf("No Fabric environments found in consortium %s\n", kn.Consortium.ID)
+		os.Exit(1)
+	} else if requestedEnvironment != "" {
+		for _, env := range liveEnvs {
+			if env.ID == requestedEnvironment {
+				targetEnv = env
+			}
+		}
+		if targetEnv.ID != requestedEnvironment {
+			fmt.Printf("No environment found matching id=%s in consortium %s\n", requestedEnvironment, kn.Consortium.ID)
+			os.Exit(1)
+		}
+	} else if len(liveEnvs) > 1 {
 		reader := bufio.NewReader(os.Stdin)
 		fmt.Println("Select the target environment:")
 		for i, env := range liveEnvs {

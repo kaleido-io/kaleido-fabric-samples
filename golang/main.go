@@ -38,7 +38,8 @@ func main() {
 
 	wallet := kaleido.NewWallet(username, *network, sdk1)
 	err = wallet.InitIdentity()
-	if err != nil {
+	if err != nil || wallet.Signer == nil {
+		fmt.Printf("Failed to initiate wallet: %v\n", err)
 		os.Exit(1)
 	}
 

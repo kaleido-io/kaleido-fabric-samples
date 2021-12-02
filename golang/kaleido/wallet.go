@@ -33,9 +33,27 @@ func (w *Wallet) InitIdentity() error {
 
 	si, err := mspClient.GetSigningIdentity(w.UserName)
 	if err != nil {
-		fmt.Printf("Failed to get signing identity. %v. Assuming this is a new user and will attempt to register and enroll.\n", err)
+		fmt.Printf("Failed to get signing identity: %v. Assuming this is a new user and will attempt to register and enroll.\n", err)
 		baseUrl := getApiUrl()
 		svcId := w.network.MyCA.ID
+
+		var existingRegistrations []map[string]interface{}
+		fullUrl := fmt.Sprintf("%s/fabric-ca/%s/registrations", baseUrl, svcId)
+		res, err := w.network.client.Client.R().SetResult(&existingRegistrations).Get(fullUrl)
+		if err == nil && res.IsError() {
+			err = fmt.Errorf("[%d]", res.StatusCode())
+		}
+		if err != nil {
+			fmt.Printf("Failed to get existing registrations from Fabric CA %s: %v\n", fullUrl, err)
+			return err
+		}
+		for _, existing := range existingRegistrations {
+			existingId, ok := existing["id"].(string)
+			if ok && existingId == w.UserName {
+				return fmt.Errorf("existing incomplete registration for user %s", w.UserName)
+			}
+		}
+
 		// register for the signing identity
 		reg1 := make(map[string]string)
 		reg1["enrollmentID"] = w.UserName
@@ -44,17 +62,20 @@ func (w *Wallet) InitIdentity() error {
 		payload["registrations"] = []interface{}{reg1}
 
 		result := make(map[string][]map[string]interface{})
-
-		fullUrl := fmt.Sprintf("%s/fabric-ca/%s/register", baseUrl, svcId)
-		res, err := w.network.client.Client.R().SetBody(payload).SetResult(&result).Post(fullUrl)
+		fullUrl = fmt.Sprintf("%s/fabric-ca/%s/register", baseUrl, svcId)
+		res, err = w.network.client.Client.R().SetBody(payload).SetResult(&result).Post(fullUrl)
+		fmt.Printf("Register result: %v. Response: %v\n", result, res)
+		if err == nil && res.IsError() {
+			err = fmt.Errorf("[%d]", res.StatusCode())
+		}
 		if err != nil {
-			fmt.Printf("Failed to register user with Fabric CA. %v\n", err)
+			fmt.Printf("Failed to register user with Fabric CA %s: %v\n", fullUrl, err)
 			return err
 		}
-
-		fmt.Printf("Register result: %v. Response: %v\n", result, res)
 		registrations := result["registrations"]
-		si, err = w.enroll(registrations[0], mspClient)
+		registration := registrations[0]
+
+		si, err = w.enroll(registration, mspClient)
 		if err != nil {
 			fmt.Printf("Failed to enroll user %s", w.UserName)
 			return err
