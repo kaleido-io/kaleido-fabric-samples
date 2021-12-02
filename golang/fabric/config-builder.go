@@ -1,10 +1,14 @@
 package fabric
 
 import (
+	"bytes"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io/ioutil"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -40,7 +44,7 @@ func BuildConfig(kn *kaleido.KaleidoNetwork) (map[string]interface{}, error) {
 	if os.IsNotExist(err) {
 		errDir := os.MkdirAll(mspdir, 0755)
 		if errDir != nil {
-			return nil, fmt.Errorf("Failed to create msp dir %s", mspdir)
+			return nil, fmt.Errorf("failed to create msp dir %s", mspdir)
 		}
 	}
 	cryptoconf["path"] = mspdir
@@ -152,7 +156,8 @@ func BuildConfig(kn *kaleido.KaleidoNetwork) (map[string]interface{}, error) {
 
 	certAuthorities := make(map[string]interface{})
 	myCA := make(map[string]interface{})
-	myCA["url"] = kn.MyCA.Urls["http"].(string)
+	caURL := kn.MyCA.Urls["http"].(string)
+	myCA["url"] = caURL
 	tlsCACerts := make(map[string]string)
 	currentdir, err := os.Getwd()
 	if err != nil {
@@ -161,14 +166,44 @@ func BuildConfig(kn *kaleido.KaleidoNetwork) (map[string]interface{}, error) {
 	}
 	kaledioCACert := os.Getenv("KALEIDO_CA_CERT")
 	if kaledioCACert == "" {
-		kaledioCACert = "resources/kaleido_ca.pem"
+		kaledioCACert = path.Join(currentdir, "resources/kaleido_ca.pem")
+		if err = downloadCACert(caURL, kaledioCACert); err != nil {
+			fmt.Println(err)
+			return nil, err
+		}
 	}
-	tlsCACerts["path"] = path.Join(currentdir, kaledioCACert)
+	tlsCACerts["path"] = kaledioCACert
 	myCA["tlsCACerts"] = tlsCACerts
 	certAuthorities[kn.MyCA.MembershipID] = myCA
 	m["certificateAuthorities"] = certAuthorities
 
 	return m, nil
+}
+
+func downloadCACert(urlString, fileName string) error {
+	// Kaleido should be trusted by default dialer
+	u, err := url.Parse(urlString)
+	if err != nil {
+		return fmt.Errorf("bad CA URL %s: %s", urlString, err)
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	conn, err := tls.Dial("tcp", fmt.Sprintf("%s:%s", u.Host, port), &tls.Config{})
+	if err == nil {
+		err = conn.Handshake()
+	}
+	if err != nil {
+		return fmt.Errorf("failed to download TLS cert from %s: %s", u.String(), err)
+	}
+	buf := &bytes.Buffer{}
+	for _, cert := range conn.ConnectionState().PeerCertificates {
+		if err := pem.Encode(buf, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}); err != nil {
+			return fmt.Errorf("failed to serialize DER content to PEM: %s", err)
+		}
+	}
+	return ioutil.WriteFile(fileName, buf.Bytes(), 0664)
 }
 
 func AddTlsConfig(configmap map[string]interface{}, signer msp.SigningIdentity) {
@@ -209,7 +244,7 @@ func saveNodeTlsCA(node kld.Node, env kld.Environment) (string, error) {
 	var nodeIdentity FabricNodeInfo
 	err := json.Unmarshal(decoded, &nodeIdentity)
 	if err != nil {
-		return "", fmt.Errorf("Failed to parse node info for peer %s. %s", node.ID, err)
+		return "", fmt.Errorf("failed to parse node info for peer %s. %s", node.ID, err)
 	}
 
 	homedir, _ := os.UserHomeDir()
@@ -218,13 +253,13 @@ func saveNodeTlsCA(node kld.Node, env kld.Environment) (string, error) {
 	if os.IsNotExist(err) {
 		errDir := os.MkdirAll(nodeMspPath, 0755)
 		if errDir != nil {
-			return "", fmt.Errorf("Failed to create node msp dir %s", nodeMspPath)
+			return "", fmt.Errorf("failed to create node msp dir %s", nodeMspPath)
 		}
 	}
 	caPemFile := path.Join(nodeMspPath, "ca.pem")
 	err = ioutil.WriteFile(caPemFile, []byte(nodeIdentity.OrgCA), 0644)
 	if err != nil {
-		return "", fmt.Errorf("Failed to write tls CA PEM for node %s. %s", node.ID, err)
+		return "", fmt.Errorf("failed to write tls CA PEM for node %s. %s", node.ID, err)
 	}
 
 	return caPemFile, nil
