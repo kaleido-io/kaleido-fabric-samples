@@ -33,21 +33,32 @@ async function main() {
     const contract = network.getContract(chaincodeName);
 
     const isInit = prompt('Calling "InitLedger" (y/n)? ');
-    let fcn, args;
     if (isInit === 'y') {
-      fcn = 'InitLedger';
-      args = [];
+      // Initialize ledger with demo assets
+      const fcn = 'InitLedger';
+      console.log(`--> Submitting Transaction. fcn: ${fcn}`);
+      await contract.submitTransaction(fcn);
+      console.log('*** Result: committed');
     } else {
-      fcn = 'CreateAsset';
+      // Add an asset with a random id to the channel using the 'CreateAsset' chaincode function
+      let fcn = 'CreateAsset';
       const assetId = `asset-${Math.floor(Math.random() * 1000000)}`;
-      console.log(`Generating a random asset ID to use to create a new asset: ${assetId}`);
-      args = [assetId, "yellow", "5", "Tom", "1300"];
-    }
-    // Initialize a set of asset data on the channel using the chaincode 'InitLedger' function.
-    console.log(`\n--> Submitting Transaction. fcn: ${fcn}, args: ${args}`);
-    await contract.submitTransaction(fcn, ...args);
-    console.log('*** Result: committed');
+      console.log(`Adding new asset with following random asset ID to the ledger: ${assetId}`);
+      let args = [assetId, "yellow", "5", "Benny", "53000"];
 
+      console.log(`--> Submitting Transaction. fcn: ${fcn}, args: ${args}`);
+      await contract.submitTransaction(fcn, ...args);
+      console.log('*** Result: committed');
+
+      // Read just created asset from the channel using the 'ReadAsset' chaincode function
+      fcn = 'ReadAsset';
+      console.log(`Reading asset with ID: ${assetId}`);
+      args = [assetId];
+
+      console.log(`--> Evaluating Transaction. fcn: ${fcn}, args: ${args}`);
+      const blockchainResponse = await contract.evaluateTransaction(fcn, ...args);
+      console.log(`*** Result: ${blockchainResponse}`);
+    }
   } catch (error) {
 		console.error(`******** FAILED to run the application: ${error.stack ? error.stack : error}`);
 	} finally {
