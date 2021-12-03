@@ -125,7 +125,7 @@ class KaleidoClient {
     let result = await axios.get(`${this.kaleidoUrl}/c/${consortiumId}/e/${environmentId}/channels`, this.apiAuth);
     let ret;
     if (result.data.length === 0) {
-      console.info(`No channels found in the environment ${environmentId}. The "default-channel" should have been created. Something went wrong in the environment. Exitting.`);
+      console.info(`No channels found in the environment ${environmentId}. The "default-channel" should have been created. Something went wrong in the environment. Exiting.`);
       process.exit(1);
     } else if (result.data.length > 1) {
       console.log('Found these channels:');
