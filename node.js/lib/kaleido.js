@@ -21,8 +21,7 @@ class KaleidoClient {
         Authorization: `Bearer ${apiKey}`
       }
     };
-    const url = process.env.KALEIDO_URL || 'https://console.kaleido.io/api/v1';
-    this.kaleidoUrl = `${url}/api/v1`;
+    this.kaleidoUrl = process.env.KALEIDO_URL || 'https://console.kaleido.io/api/v1';
   }
 
   async init() {
