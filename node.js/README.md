@@ -28,7 +28,7 @@ Required environment variables:
 - `APIKEY`: Kaleido API key created in your account's profile
 
 Optional environment variables:
-- `KALEIDO_URL`: the root URL for the Kaleido API endpoints. Default is `https://console.kaleido.io`
+- `KALEIDO_URL`: the root URL for the Kaleido API endpoints. Default is `https://console.kaleido.io/api/v1`
 - `USER_ID`: name of the user to register and enroll with the Fabric CA service, to be used to submit transactions. Default is `user01`
 - `CCNAME`: name of the chaincode to invoke. Default is `asset_transfer`
 - `USE_DISCOVERY`: whether to use the discovery service or not. Default is `false`.
