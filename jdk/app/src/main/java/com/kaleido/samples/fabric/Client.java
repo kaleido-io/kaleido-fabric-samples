@@ -5,6 +5,10 @@ import java.nio.file.Paths;
 import java.util.concurrent.TimeoutException;
 
 import com.kaleido.samples.kaleido.Config;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.kaleido.samples.kaleido.BusinessNetwork;
 
 import org.hyperledger.fabric.gateway.Contract;
@@ -52,9 +56,12 @@ public class Client {
     this.contract.submitTransaction("InitLedger");
   }
 
-  public void getAllAssets() throws ContractException {
+  public void getAllAssets() throws ContractException, JsonMappingException, JsonProcessingException {
     byte[] result = contract.evaluateTransaction("GetAllAssets");
-    System.out.println("Evaluate Transaction: GetAllAssets, result: " + new String(result));
+    ObjectMapper mapper = new ObjectMapper();
+    JsonNode json = mapper.readTree(new String(result));
+    String prettyJson = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(json);
+    System.out.println("Evaluate Transaction: GetAllAssets, result: " + prettyJson);
   }
 
   public void createAsset(String assetId) throws ContractException, TimeoutException, InterruptedException {
