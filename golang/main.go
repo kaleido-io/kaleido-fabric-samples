@@ -68,7 +68,7 @@ func main() {
 		sdk2 := newSDK(config)
 		defer sdk2.Close()
 
-		channel = kaleido.NewChannel("default-channel", sdk2)
+		channel = kaleido.NewChannel(network.TargetChannel.Name, sdk2)
 		err = channel.Connect(wallet.Signer.Identifier())
 		if err != nil {
 			fmt.Printf("Failed to connect to channel: %s\n", err)

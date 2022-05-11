@@ -11,13 +11,14 @@ import (
 )
 
 type KaleidoNetwork struct {
-	Consortium   kld.Consortium
-	Environment  kld.Environment
-	Memberships  []kld.Membership
-	MyMembership kld.Membership
-	MyCA         kld.Service
-	Orderers     []kld.Node
-	Peers        []kld.Node
+	Consortium    kld.Consortium
+	Environment   kld.Environment
+	Memberships   []kld.Membership
+	MyMembership  kld.Membership
+	MyCA          kld.Service
+	TargetChannel kld.Channel
+	Orderers      []kld.Node
+	Peers         []kld.Node
 
 	client kld.KaleidoClient
 }
@@ -44,6 +45,7 @@ func (kn *KaleidoNetwork) Initialize() {
 	kn.selectConsortium()
 	kn.selectEnvironment()
 	kn.selectMembership()
+	kn.selectChannel()
 	kn.getMyCA()
 	kn.getOrderersAndPeers()
 }
@@ -202,6 +204,53 @@ func (kn *KaleidoNetwork) selectMembership() {
 	fmt.Printf("Target membership: %v (id=%v)\n", targetMembership.OrgName, targetMembership.ID)
 	kn.MyMembership = targetMembership
 	kn.Memberships = memberships
+}
+
+func (kn *KaleidoNetwork) selectChannel() {
+	var channels []kld.Channel
+	var targetChannel kld.Channel
+
+	_, err := kn.client.ListChannel(kn.Consortium.ID, kn.Environment.ID, &channels)
+	if err != nil {
+		fmt.Printf("Failed to get list of channels. %v\n", err)
+		os.Exit(1)
+	}
+	if len(channels) == 0 {
+		fmt.Println("The environment does not have any channels.")
+		os.Exit(1)
+	}
+	desiredChannel := os.Getenv("CHANNEL_ID")
+	if len(channels) > 1 && desiredChannel == "" {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Println("Select the channel to submit transactions to:")
+		for i, channel := range channels {
+			fmt.Printf("\t[%v] %v\n", i, channel.Name)
+		}
+
+		for {
+			fmt.Print("-> ")
+			text, _ := reader.ReadString('\n')
+			// convert CRLF to LF
+			text = strings.Replace(text, "\n", "", -1)
+
+			i, _ := strconv.Atoi(text)
+			targetChannel = channels[i]
+			break
+		}
+	} else {
+		if desiredChannel != "" {
+			for _, channel := range channels {
+				if channel.Name == desiredChannel {
+					targetChannel = channel
+					break
+				}
+			}
+		} else {
+			targetChannel = channels[0]
+		}
+	}
+
+	kn.TargetChannel = targetChannel
 }
 
 func (kn *KaleidoNetwork) getOrderersAndPeers() {

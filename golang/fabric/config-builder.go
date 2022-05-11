@@ -95,7 +95,7 @@ func BuildConfig(kn *kaleido.KaleidoNetwork) (map[string]interface{}, error) {
 	m["organizations"] = orgs
 
 	channels := make(map[string]interface{})
-	defaultChannel := make(map[string]interface{})
+	targetChannel := make(map[string]interface{})
 
 	channelPeers := make(map[string]interface{})
 	peers := make(map[string]interface{})
@@ -123,8 +123,8 @@ func BuildConfig(kn *kaleido.KaleidoNetwork) (map[string]interface{}, error) {
 			peers[hostname] = opeer
 		}
 	}
-	defaultChannel["peers"] = channelPeers
-	channels["default-channel"] = defaultChannel
+	targetChannel["peers"] = channelPeers
+	channels[kn.TargetChannel.Name] = targetChannel
 	m["channels"] = channels
 	m["peers"] = peers
 
@@ -151,7 +151,7 @@ func BuildConfig(kn *kaleido.KaleidoNetwork) (map[string]interface{}, error) {
 			}
 		}
 	}
-	defaultChannel["orderers"] = channelOrderers
+	targetChannel["orderers"] = channelOrderers
 	m["orderers"] = orderers
 
 	certAuthorities := make(map[string]interface{})
