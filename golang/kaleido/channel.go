@@ -32,31 +32,33 @@ func (c *Channel) Connect(signer *msp.IdentityIdentifier) error {
 	return nil
 }
 
-func (c *Channel) InitChaincode(chaincodeId string) error {
+func (c *Channel) InitChaincode(chaincodeId string) (string, error) {
 	return c.invokeChaincode(chaincodeId)
 }
 
-func (c *Channel) ExecChaincode(chaincodeId, assetId string) error {
+func (c *Channel) ExecChaincode(chaincodeId, assetId string) (string, error) {
 	return c.invokeChaincode(chaincodeId, assetId)
 }
 
-func (c *Channel) invokeChaincode(chaincodeId string, assetName ...string) error {
+func (c *Channel) invokeChaincode(chaincodeId string, assetName ...string) (string, error) {
+	var resp channel.Response
+	var err error
 	if len(assetName) == 0 {
-		_, err := c.client.Execute(
+		resp, err = c.client.Execute(
 			channel.Request{ChaincodeID: chaincodeId, Fcn: "InitLedger", IsInit: true},
 			channel.WithRetry(retry.DefaultChannelOpts),
 		)
 		if err != nil {
-			return fmt.Errorf("Failed to send transaction to initialize the chaincode. %s", err)
+			return "", fmt.Errorf("Failed to send transaction to initialize the chaincode. %s", err)
 		}
 	} else {
-		_, err := c.client.Execute(
+		resp, err = c.client.Execute(
 			channel.Request{ChaincodeID: chaincodeId, Fcn: "CreateAsset", Args: [][]byte{[]byte(assetName[0]), []byte("yellow"), []byte("10"), []byte("Tom"), []byte("1300")}},
 			channel.WithRetry(retry.DefaultChannelOpts),
 		)
 		if err != nil {
-			return fmt.Errorf("Failed to send transaction to invoke the chaincode. %s", err)
+			return "", fmt.Errorf("Failed to send transaction to invoke the chaincode. %s", err)
 		}
 	}
-	return nil
+	return string(resp.TransactionID), nil
 }

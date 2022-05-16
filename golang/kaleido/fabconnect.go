@@ -2,10 +2,6 @@ package kaleido
 
 import (
 	"fmt"
-	"os"
-	"sort"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -60,21 +56,17 @@ type FabconnectTransactionReceipt struct {
 }
 
 type FabconnectClient struct {
-	r              *resty.Client
-	username       string
-	batchTxMap     map[int]map[string]FabconnectTransactionReceipt
-	batchTxMapLock sync.Mutex
-	start          time.Time
+	r        *resty.Client
+	username string
+	Start    time.Time
 }
 
 func NewFabconnectClient(fabconnectUrl, username string) *FabconnectClient {
 	r := resty.New().SetBaseURL(fabconnectUrl)
 	return &FabconnectClient{
-		r:              r,
-		username:       username,
-		batchTxMap:     make(map[int]map[string]FabconnectTransactionReceipt),
-		batchTxMapLock: sync.Mutex{},
-		start:          time.Now(),
+		r:        r,
+		username: username,
+		Start:    time.Now(),
 	}
 }
 
@@ -129,32 +121,25 @@ func (f *FabconnectClient) EnsureIdentity() error {
 	return nil
 }
 
-func (f *FabconnectClient) InitChaincode(chaincodeId string) error {
-	return f.ExecChaincode(true, 0, chaincodeId, "")
+func (f *FabconnectClient) InitChaincode(chaincodeId string) (string, error) {
+	return f.ExecChaincode(true, chaincodeId, "")
 }
 
-func (f *FabconnectClient) ExecChaincode(init bool, batch int, chaincodeId, assetName string) error {
-	transactionId, err := f.sendTransaction(init, chaincodeId, assetName)
+func (f *FabconnectClient) ExecChaincode(init bool, chaincodeId, assetName string) (string, error) {
+	receiptId, err := f.sendTransaction(init, chaincodeId, assetName)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	f.batchTxMapLock.Lock()
-	if f.batchTxMap[batch] == nil {
-		f.batchTxMap[batch] = make(map[string]FabconnectTransactionReceipt)
-	}
-	f.batchTxMap[batch][transactionId] = FabconnectTransactionReceipt{}
-	f.batchTxMapLock.Unlock()
-
-	return nil
+	return receiptId, nil
 }
 
-func (f *FabconnectClient) sendTransaction(init bool, chaincodeId string, assetName ...string) (string, error) {
+func (f *FabconnectClient) sendTransaction(init bool, chaincodeId string, assetName string) (string, error) {
 	functionName := "InitLedger"
 	functionArgs := []string{}
 	if !init {
 		functionName = "CreateAsset"
-		functionArgs = []string{assetName[0], "yellow", "10", "Tom", "1300"}
+		functionArgs = []string{assetName, "yellow", "10", "Tom", "1300"}
 	}
 
 	transactionPayload := FabconnectTransactionPayload{
@@ -190,104 +175,18 @@ func (f *FabconnectClient) sendTransaction(init bool, chaincodeId string, assetN
 	return transactionConfirmation.Id, nil
 }
 
-func (f *FabconnectClient) MonitorBatch(batch int) error {
-	fmt.Printf("Batch %d contains %d successfully submitted transactions\n", batch+1, len(f.batchTxMap[batch]))
+func (f *FabconnectClient) GetReceipt(receiptId string) (*FabconnectTransactionReceipt, error) {
+	fmt.Printf("Getting receipts for %s\n", receiptId)
 
-	for {
-		fmt.Printf("Waiting 5 seconds for polling for receipts from batch %d\n", batch+1)
-		time.Sleep(5 * time.Second)
-
-		err := f.getReceipts(batch, f.batchTxMap[batch])
-		if err != nil {
-			return err
-		}
-
-		successfulReceipts := make([]FabconnectTransactionReceipt, 0)
-
-		continuePolling := false
-		for k, ftr := range f.batchTxMap[batch] {
-			if ftr.Headers.Type == "TransactionSuccess" {
-				successfulReceipts = append(successfulReceipts, ftr)
-			} else {
-				continuePolling = continuePolling || ftr.Headers.Type != "Error"
-				fmt.Printf("  - Batch %d transaction %s ERROR. TimeElapsed: %f, Type: %s\n", batch+1, k, ftr.Headers.TimeElapsed, ftr.Headers.Type)
-			}
-		}
-
-		sort.Slice(successfulReceipts, func(i, j int) bool {
-			return successfulReceipts[i].Headers.TimeElapsed < successfulReceipts[j].Headers.TimeElapsed
-		})
-		for _, ftr := range successfulReceipts {
-			fmt.Printf("  - Batch %d transaction %s SUCCESS. TimeElapsed: %f\n", batch+1, ftr.Id, ftr.Headers.TimeElapsed)
-		}
-
-		if !continuePolling {
-			fmt.Printf("All transaction receipts received from batch %d\n", batch+1)
-			break
-		}
-	}
-
-	return nil
-}
-
-func (f *FabconnectClient) PrintFinalReport(batches int) {
-	fmt.Println("\n\nFinal Report")
-	totalFailures := 0
-	maxTotalTime := 0.0
-	maxFromBatch := 0
-	for i := 0; i < batches; i++ {
-		successfulReceipts := 0
-		maxTime := 0.0
-		for _, ftr := range f.batchTxMap[i] {
-			if ftr.Headers.Type == "TransactionSuccess" {
-				successfulReceipts++
-			} else {
-				totalFailures++
-			}
-			te := ftr.Headers.TimeElapsed
-			if te > maxTime {
-				maxTime = te
-				if te > maxTotalTime {
-					maxTotalTime = te
-					maxFromBatch = i + 1
-				}
-			}
-		}
-		fmt.Printf("  - Batch %d: %d of %d submitted transactions were successful. Longest TimeElapsed: %f\n", i+1, successfulReceipts, len(f.batchTxMap[i]), maxTime)
-	}
-	fmt.Printf("  - Total program runtime: %s\n", time.Since(f.start))
-	fmt.Printf("  - Total batches: %d\n", batches)
-	fmt.Printf("  - Transactions per batch: %s\n", os.Getenv("TX_COUNT"))
-	fmt.Printf("  - Total transaction failures from all batches: %d\n", totalFailures)
-	fmt.Printf("  - Longest transaction TimeElapsed from all batches: %f from batch %d\n", maxTotalTime, maxFromBatch)
-}
-
-func (f *FabconnectClient) getReceipts(batch int, batchTransactions map[string]FabconnectTransactionReceipt) error {
-	ids := make([]string, 0, len(batchTransactions))
-	for k, ftr := range batchTransactions {
-		if ftr.Headers.Type != "TransactionSuccess" {
-			ids = append(ids, k)
-		}
-	}
-
-	fmt.Printf("Getting receipts for %d unverified transactions in batch %d\n", len(ids), batch+1)
-
-	var receipts []FabconnectTransactionReceipt
-	_, err := f.r.R().SetResult(&receipts).Get(fmt.Sprintf("/receipts?id=%s", strings.Join(ids, "&id=")))
+	var receipt FabconnectTransactionReceipt
+	resp, err := f.r.R().SetResult(&receipt).Get(fmt.Sprintf("/receipts/%s", receiptId))
 	if err != nil {
-		fmt.Printf("Failed to get receipts. %v\n", err)
-		return err
+		fmt.Printf("Failed to get receipt %s. %v\n", receiptId, err)
+		return nil, err
+	} else if resp.StatusCode() != 200 {
+		fmt.Printf("Status code for getting receipt %s: %d\n", receiptId, resp.StatusCode())
+		return nil, nil
 	}
 
-	f.batchTxMapLock.Lock()
-	for _, ftr := range receipts {
-		batchTransactions[ftr.Id] = FabconnectTransactionReceipt{
-			Id:      ftr.Id,
-			Headers: ftr.Headers,
-			Status:  ftr.Status,
-		}
-	}
-	f.batchTxMapLock.Unlock()
-
-	return nil
+	return &receipt, nil
 }
