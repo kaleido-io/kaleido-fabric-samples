@@ -48,20 +48,21 @@ async function main() {
         const assetId = `asset-${Math.floor(Math.random() * 1000000)}`;
         console.log(`Generating a random asset ID to use to create a new asset: ${assetId}`);
         args = [assetId, "yellow", "5", "Tom", "1300"];
+
+        // Initialize a set of asset data on the channel using the chaincode 'InitLedger' function.
+        console.log(`\n--> Submitting Transaction. fcn: ${fcn}, args: ${args}`);
+        await contract.submitTransaction(fcn, ...args);
+        console.log('*** Result: committed');
+
+        // Read just created asset from the channel using the 'ReadAsset' chaincode function
+        // fcn = 'ReadAsset';
+        // console.log(`Reading asset with ID: ${assetId}`);
+        // args = [assetId];
+
+        // console.log(`--> Evaluating Transaction. fcn: ${fcn}, args: ${args}`);
+        // const blockchainResponse = await contract.evaluateTransaction(fcn, ...args);
+        // console.log(`*** Result: ${blockchainResponse}`);
       }
-      // Initialize a set of asset data on the channel using the chaincode 'InitLedger' function.
-      console.log(`\n--> Submitting Transaction. fcn: ${fcn}, args: ${args}`);
-      await contract.submitTransaction(fcn, ...args);
-      console.log('*** Result: committed');
-
-      // Read just created asset from the channel using the 'ReadAsset' chaincode function
-      fcn = 'ReadAsset';
-      console.log(`Reading asset with ID: ${assetId}`);
-      args = [assetId];
-
-      console.log(`--> Evaluating Transaction. fcn: ${fcn}, args: ${args}`);
-      const blockchainResponse = await contract.evaluateTransaction(fcn, ...args);
-      console.log(`*** Result: ${blockchainResponse}`);
     }
   } catch (error) {
 		console.error(`******** FAILED to run the application: ${error.stack ? error.stack : error}`);
