@@ -129,10 +129,12 @@ type FabconnectClient struct {
 
 func NewFabconnectClient(fabconnectUrl, username string) (*FabconnectClient, error) {
 	r := resty.New().SetBaseURL(fabconnectUrl).SetRetryCount(10).AddRetryCondition(func(r *resty.Response, err error) bool {
-		var errMsg ErrorMessage
-		err = json.Unmarshal(r.Body(), &errMsg)
-		if err == nil && errMsg.Message == "Too many in-flight transactions" {
-			return true
+		if r.StatusCode() > 202 {
+			var errMsg ErrorMessage
+			err1 := json.Unmarshal(r.Body(), &errMsg)
+			if err1 == nil && errMsg.Message == "Too many in-flight transactions" {
+				return true
+			}
 		}
 		return false
 	})
@@ -366,7 +368,6 @@ func (f *FabconnectClient) StartEventClient(assetIdsChan chan string) error {
 				fmt.Println("read:", err)
 				return
 			}
-			fmt.Printf("recv: %s", message)
 			events := []Event{}
 			err = json.Unmarshal(message, &events)
 			if err != nil {
