@@ -1,10 +1,15 @@
 package kaleido
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/gorilla/websocket"
+	log "github.com/sirupsen/logrus"
 )
 
 type FabconnectIdentity struct {
@@ -55,33 +60,97 @@ type FabconnectTransactionReceipt struct {
 	Status  string                              `json:"status,omitempty"`
 }
 
-type FabconnectClient struct {
-	r        *resty.Client
-	username string
-	Start    time.Time
+type FabConnectEventStreamPostPayload struct {
+	Name      string        `json:"name,omitempty"`
+	Type      string        `json:"type,omitempty"`
+	BatchSize int           `json:"batchSize,omitempty"`
+	WebSocket WebSocketSpec `json:"websocket,omitempty"`
 }
 
-func NewFabconnectClient(fabconnectUrl, username string) *FabconnectClient {
-	r := resty.New().SetBaseURL(fabconnectUrl)
+type WebSocketSpec struct {
+	Topic string `json:"topic,omitempty"`
+}
+
+type FabConnectEventStreamPostResponse struct {
+	ID string `json:"id,omitempty"`
+}
+
+type FabConnectSubscriptionPostPayload struct {
+	StreamId    string     `json:"stream,omitempty"`
+	Channel     string     `json:"channel,omitempty"`
+	Name        string     `json:"name,omitempty"`
+	Signer      string     `json:"signer,omitempty"`
+	FromBlock   string     `json:"fromBlock,omitempty"`
+	PayloadType string     `json:"payloadType,omitempty"`
+	Filter      FilterSpec `json:"filter,omitempty"`
+}
+
+type FilterSpec struct {
+	ChaincodeId string `json:"chaincodeId,omitempty"`
+}
+
+type Event struct {
+	ChaincodeId string       `json:"chaincodeId"`
+	BlockNumber uint64       `json:"blockNumber"`
+	TxId        string       `json:"transactionId"`
+	TxIndex     int          `json:"transactionIndex"`
+	EventIndex  int          `json:"eventIndex"`
+	EventName   string       `json:"eventName"`
+	Payload     EventPayload `json:"payload"`
+}
+
+type EventPayload struct {
+	AssetId string `json:"ID"`
+}
+
+type ChainInfoResponse struct {
+	Result ChainInfo `json:"result"`
+}
+
+type ChainInfo struct {
+	Height int `json:"height"`
+}
+
+const (
+	EVENT_LISTENER_TOPIC = "fabconnect-perf-topic-1"
+)
+
+type FabconnectClient struct {
+	r              *resty.Client
+	ws             *websocket.Conn
+	username       string
+	EventBatchSize int
+	Start          time.Time
+}
+
+func NewFabconnectClient(fabconnectUrl, username string) (*FabconnectClient, error) {
+	r := resty.New().SetBaseURL(fabconnectUrl).SetRetryCount(10)
+	conn, _, err := websocket.DefaultDialer.Dial("ws://localhost:3001/ws", nil)
+	if err != nil {
+		log.Errorf("Failed to connect to websocket. %v", err)
+		return nil, err
+	}
+
 	return &FabconnectClient{
 		r:        r,
+		ws:       conn,
 		username: username,
 		Start:    time.Now(),
-	}
+	}, nil
 }
 
 func (f *FabconnectClient) EnsureIdentity() error {
-	fmt.Printf("Checking if identity exists: %s\n", f.username)
+	log.Infof("Checking if identity exists: %s", f.username)
 	var identity FabconnectIdentity
 	getIdentity, err := f.r.R().SetResult(&identity).Get(fmt.Sprintf("/identities/%s", f.username))
 	if err != nil {
-		fmt.Printf("Failed to get identity. %v\n", err)
+		log.Errorf("Failed to get identity. %v", err)
 		return err
 	}
 
 	if getIdentity.StatusCode() == 500 {
-		fmt.Printf("Error getting identity. %v\n", getIdentity.String())
-		fmt.Printf("Creating identity: %s\n", f.username)
+		log.Errorf("Error getting identity. %v", getIdentity.String())
+		log.Infof("Creating identity: %s", f.username)
 
 		identityPayload := FabconnectIdentityPayload{
 			Name:           f.username,
@@ -95,16 +164,16 @@ func (f *FabconnectClient) EnsureIdentity() error {
 			return fmt.Errorf("failed to create identity. %v", err)
 		}
 	} else {
-		fmt.Printf("Identity already exists: %s\n", f.username)
+		log.Infof("Identity already exists: %s", f.username)
 	}
 
 	if identity.EnrollmentCert != "" {
-		fmt.Printf("Identity already enrolled: %s\n", f.username)
+		log.Infof("Identity already enrolled: %s", f.username)
 		return nil
 	}
 
 	if identity.Secret != "" {
-		fmt.Printf("Enrolling identity: %s\n", f.username)
+		log.Infof("Enrolling identity: %s", f.username)
 
 		enrollIdentityPayload := FabconnectEnrollIdentityPayload{
 			Secret:     identity.Secret,
@@ -121,12 +190,8 @@ func (f *FabconnectClient) EnsureIdentity() error {
 	return nil
 }
 
-func (f *FabconnectClient) InitChaincode(chaincodeId string) (string, error) {
-	return f.ExecChaincode(true, chaincodeId, "")
-}
-
-func (f *FabconnectClient) ExecChaincode(init bool, chaincodeId, assetName string) (string, error) {
-	receiptId, err := f.sendTransaction(init, chaincodeId, assetName)
+func (f *FabconnectClient) InitChaincode(channel, chaincodeId string) (string, error) {
+	receiptId, err := f.sendTransaction(true, channel, chaincodeId, "")
 	if err != nil {
 		return "", err
 	}
@@ -134,7 +199,16 @@ func (f *FabconnectClient) ExecChaincode(init bool, chaincodeId, assetName strin
 	return receiptId, nil
 }
 
-func (f *FabconnectClient) sendTransaction(init bool, chaincodeId string, assetName string) (string, error) {
+func (f *FabconnectClient) ExecChaincode(channel, chaincodeId, assetName string) (string, error) {
+	receiptId, err := f.sendTransaction(false, channel, chaincodeId, assetName)
+	if err != nil {
+		return "", err
+	}
+
+	return receiptId, nil
+}
+
+func (f *FabconnectClient) sendTransaction(init bool, channel, chaincodeId string, assetName string) (string, error) {
 	functionName := "InitLedger"
 	functionArgs := []string{}
 	if !init {
@@ -146,7 +220,7 @@ func (f *FabconnectClient) sendTransaction(init bool, chaincodeId string, assetN
 		Headers: FabconnectTransactionPayloadHeaders{
 			Type:      "SendTransaction",
 			Signer:    f.username,
-			Channel:   "default-channel",
+			Channel:   channel,
 			Chaincode: chaincodeId,
 		},
 		Func: functionName,
@@ -165,7 +239,7 @@ func (f *FabconnectClient) sendTransaction(init bool, chaincodeId string, assetN
 	}
 
 	if !sendTx.Request.TraceInfo().IsConnReused {
-		fmt.Println("== HTTP connection was not reused ==")
+		log.Info("== HTTP connection was not reused ==")
 	}
 
 	if !transactionConfirmation.Sent {
@@ -176,17 +250,131 @@ func (f *FabconnectClient) sendTransaction(init bool, chaincodeId string, assetN
 }
 
 func (f *FabconnectClient) GetReceipt(receiptId string) (*FabconnectTransactionReceipt, error) {
-	fmt.Printf("Getting receipts for %s\n", receiptId)
+	log.Infof("Getting receipts for %s", receiptId)
 
 	var receipt FabconnectTransactionReceipt
 	resp, err := f.r.R().SetResult(&receipt).Get(fmt.Sprintf("/receipts/%s", receiptId))
 	if err != nil {
-		fmt.Printf("Failed to get receipt %s. %v\n", receiptId, err)
+		log.Errorf("Failed to get receipt %s. %v", receiptId, err)
 		return nil, err
 	} else if resp.StatusCode() != 200 {
-		fmt.Printf("Status code for getting receipt %s: %d\n", receiptId, resp.StatusCode())
+		log.Errorf("Status code for getting receipt %s: %d", receiptId, resp.StatusCode())
 		return nil, nil
 	}
 
 	return &receipt, nil
+}
+
+func (f *FabconnectClient) CreateEventListener(channel, chaincodeId string) (string, error) {
+	batchStr := os.Getenv("EVENT_BATCH_SIZE")
+	if batchStr != "" {
+		batchSize, err := strconv.Atoi(batchStr)
+		if err != nil {
+			log.Errorf("Failed to convert %s to integer", batchStr)
+			os.Exit(1)
+		}
+		f.EventBatchSize = batchSize
+	} else {
+		f.EventBatchSize = 1
+	}
+
+	body := FabConnectEventStreamPostPayload{
+		Name:      "fabconnect-perf-1",
+		Type:      "websocket",
+		BatchSize: f.EventBatchSize,
+		WebSocket: WebSocketSpec{
+			Topic: EVENT_LISTENER_TOPIC,
+		},
+	}
+	result := FabConnectEventStreamPostResponse{}
+	_, err := f.r.R().SetBody(body).SetResult(&result).Post("/eventstreams")
+	if err != nil {
+		log.Errorf("Failed to create event stream. %v", err)
+		return "", err
+	}
+	streamId := result.ID
+	log.Infof("Created event stream: %s", streamId)
+
+	// retrieve block height
+	url := fmt.Sprintf("/chainInfo?fly-channel=%s&fly-signer=%s", channel, f.username)
+	var chainInfo ChainInfoResponse
+	_, err = f.r.R().SetResult(&chainInfo).Get(url)
+	if err != nil {
+		log.Errorf("Failed to get chain info. %v", err)
+		return "", err
+	}
+
+	subscriptionBody := FabConnectSubscriptionPostPayload{
+		StreamId:    streamId,
+		Channel:     channel,
+		Name:        "fabconnect-perf-subscription-1",
+		Signer:      f.username,
+		FromBlock:   strconv.Itoa(chainInfo.Result.Height),
+		PayloadType: "json",
+		Filter: FilterSpec{
+			ChaincodeId: chaincodeId,
+		},
+	}
+	subResult := FabConnectSubscriptionPostPayload{}
+	_, err = f.r.R().SetBody(subscriptionBody).SetResult(&subResult).Post("/subscriptions")
+	if err != nil {
+		log.Errorf("Failed to create subscription. %v", err)
+		return "", err
+	}
+
+	return streamId, nil
+}
+
+func (f *FabconnectClient) CleanupEventListener(eventStreamId string) error {
+	log.Infof("Cleaning up event stream: %s", eventStreamId)
+	_, err := f.r.R().Delete(fmt.Sprintf("/eventstreams/%s", eventStreamId))
+	if err != nil {
+		log.Errorf("Failed to delete event stream %s. %v", eventStreamId, err)
+		return err
+	}
+
+	return nil
+}
+
+func (f *FabconnectClient) StartEventClient(assetIdsChan chan string) error {
+	done := make(chan struct{})
+	err := f.ws.WriteJSON(map[string]string{
+		"type":  "listen",
+		"topic": EVENT_LISTENER_TOPIC,
+	})
+	if err != nil {
+		log.Errorf("Failed to write to websocket. %v", err)
+		return err
+	}
+	log.Infof("Listening for events")
+	go func() {
+		defer close(done)
+		for {
+			_, message, err := f.ws.ReadMessage()
+			if err != nil {
+				fmt.Println("read:", err)
+				return
+			}
+			fmt.Printf("recv: %s", message)
+			events := []Event{}
+			err = json.Unmarshal(message, &events)
+			if err != nil {
+				log.Errorf("Failed to unmarshal event response. %v", err)
+				return
+			}
+			for _, event := range events {
+				assetIdsChan <- event.Payload.AssetId
+			}
+			err = f.ws.WriteJSON(map[string]string{
+				"type":  "ack",
+				"topic": EVENT_LISTENER_TOPIC,
+			})
+			if err != nil {
+				log.Errorf("Failed to write to websocket. %v", err)
+				return
+			}
+		}
+	}()
+
+	return nil
 }

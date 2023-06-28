@@ -7,92 +7,98 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/kaleido-io/kaleido-fabric-go/kaleido"
+	log "github.com/sirupsen/logrus"
 )
 
+type FabricClient interface {
+	InitChaincode(channel, chaincodeId string) (string, error)
+	ExecChaincode(channel, chaincodeId, assetId string) (string, error)
+}
+
 type Worker interface {
-	Start(int)
-	Track(string)
+	SetClient(FabricClient)
+	IncreaseTxCount()
+	Start()
+	// Track(string)
 }
 
 type worker struct {
-	chaincode string
-	index     int
-	ctx       context.Context
-	done      chan interface{}
-	client    *kaleido.FabconnectClient
-	channel   *kaleido.Channel
+	channel      string
+	chaincode    string
+	index        int
+	txCount      int
+	ctx          context.Context
+	eventAssetId chan string
+	client       FabricClient
 }
 
-func NewWorker(ctx context.Context, ccname string, index int, done chan interface{}, client *kaleido.FabconnectClient, channel *kaleido.Channel) Worker {
+func NewWorker(ctx context.Context, channel, ccname string, index int, eventAssetId chan string) Worker {
 	w := &worker{
-		client:    client,
-		channel:   channel,
-		chaincode: ccname,
-		index:     index,
-		done:      done,
-		ctx:       ctx,
+		channel:      channel,
+		chaincode:    ccname,
+		index:        index,
+		eventAssetId: eventAssetId,
+		ctx:          ctx,
 	}
 	return w
 }
 
 var TIMEOUT time.Duration = time.Duration(60) * time.Second
 
-func (w *worker) Start(sequence int) {
-	go func() {
-		newId, err := generateId()
-		if err != nil {
-			w.done <- ""
-			return
-		}
-		assetId := fmt.Sprintf("asset-%s", newId)
-		fmt.Printf("[worker:%d] Send transaction %d (%s)\n", w.index, sequence, assetId)
-		var id string
-		label := "Receipt"
-		if w.client != nil {
-			// receipt id
-			id, err = w.client.ExecChaincode(false, w.chaincode, assetId)
-		} else {
-			// transaction id
-			label = "Transaction"
-			id, err = w.channel.ExecChaincode(w.chaincode, assetId)
-		}
-		if err != nil {
-			fmt.Printf("[worker:%d] Failed to send transaction %d (%s). %s\n", w.index, sequence, assetId, err)
-		} else {
-			fmt.Printf("[worker:%d] Transaction %d (%s) sent. %s ID: %s\n", w.index, sequence, assetId, label, id)
-		}
-
-		w.done <- id
-	}()
+func (w *worker) SetClient(client FabricClient) {
+	w.client = client
 }
 
-func (w *worker) Track(receiptId string) {
-	ticker := time.NewTicker(1 * time.Second)
-
+func (w *worker) Start() {
 	go func() {
-		ctx, cancel := context.WithTimeout(w.ctx, TIMEOUT)
-		defer cancel()
-
-		complete := false
-		for {
-			if complete {
-				break
+		// for each tx count, send a transaction
+		for i := 0; i < w.txCount; i++ {
+			newId, err := generateId()
+			if err != nil {
+				return
 			}
-			select {
-			case <-ticker.C:
-				receipt, err := w.client.GetReceipt(receiptId)
-				if err == nil && receipt != nil {
-					complete = true
-					w.done <- receipt
-				}
-			case <-ctx.Done():
-				complete = true
-				w.done <- nil
+			assetId := fmt.Sprintf("asset-%s", newId)
+			log.Infof("[worker:%d] Send transaction %d of %d (%s)", w.index, i+1, w.txCount, assetId)
+			id, err := w.client.ExecChaincode(w.channel, w.chaincode, assetId)
+			if err != nil {
+				log.Errorf("[worker:%d] Failed to send transaction %d of %d (%s). %s", w.index, i+1, w.txCount, assetId, err)
+			} else {
+				log.Infof("[worker:%d] Transaction %d of %d (%s) sent. Asset ID: %s", w.index, i+1, w.txCount, assetId, id)
 			}
 		}
 	}()
 }
+
+func (w *worker) IncreaseTxCount() {
+	w.txCount++
+}
+
+// func (w *worker) Track(receiptId string) {
+// 	ticker := time.NewTicker(1 * time.Second)
+
+// 	go func(id string) {
+// 		ctx, cancel := context.WithTimeout(w.ctx, TIMEOUT)
+// 		defer cancel()
+
+// 		complete := false
+// 		for {
+// 			if complete {
+// 				break
+// 			}
+// 			select {
+// 			case <-ticker.C:
+// 				receipt, err := w.fabconnectClient.GetReceipt(id)
+// 				if err == nil && receipt != nil {
+// 					complete = true
+// 					w.done <- receipt
+// 				}
+// 			case <-ctx.Done():
+// 				complete = true
+// 				w.done <- nil
+// 			}
+// 		}
+// 	}(receiptId)
+// }
 
 func generateId() (string, error) {
 	randomBytes := make([]byte, 32)
@@ -101,4 +107,33 @@ func generateId() (string, error) {
 		return "", err
 	}
 	return base32.HexEncoding.EncodeToString(randomBytes)[:10], nil
+}
+
+func allocateWorkers(ctx context.Context, channel, chaincode string, txCount, numWorkers int, client FabricClient) (chan string, []Worker) {
+	eventAssetIdsChan := make(chan string)
+	sequence := 0
+	workers := make([]Worker, numWorkers)
+	for ; sequence < numWorkers; sequence++ {
+		worker := NewWorker(ctx, channel, chaincode, sequence, eventAssetIdsChan)
+		worker.SetClient(client)
+		workers[sequence] = worker
+	}
+
+	for index := 0; index < txCount; index++ {
+		workerIdx := index % numWorkers
+		w := workers[workerIdx]
+		w.IncreaseTxCount()
+	}
+	return eventAssetIdsChan, workers
+}
+
+func printFinalReport(txCount, numWorkers, eventBatchSize int, startTime time.Time) {
+	fmt.Println("\n\nFinal Report")
+	fmt.Println("  - Configuration:")
+	fmt.Printf("    * total transactions: %d\n", txCount)
+	fmt.Printf("    * workers count: %d\n", numWorkers)
+	fmt.Printf("    * event batch size: %d\n", eventBatchSize)
+	elapsed := time.Since(startTime)
+	fmt.Printf("  - Total program runtime: %s\n", elapsed)
+	fmt.Printf("  - TPS: %f\n", float64(txCount)/elapsed.Seconds())
 }

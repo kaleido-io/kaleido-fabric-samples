@@ -2,15 +2,16 @@ package runners
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"time"
 
 	"github.com/kaleido-io/kaleido-fabric-go/kaleido"
+	log "github.com/sirupsen/logrus"
 )
 
 type FabconnectRunner struct {
 	user          string
+	channel       string
 	chaincode     string
 	count         int
 	workers       int
@@ -18,9 +19,10 @@ type FabconnectRunner struct {
 	client        *kaleido.FabconnectClient
 }
 
-func NewFabconnectRunner(user, chaincode string, count, workers int, initChaincode bool) *FabconnectRunner {
+func NewFabconnectRunner(user, channel, chaincode string, count, workers int, initChaincode bool) *FabconnectRunner {
 	return &FabconnectRunner{
 		user:          user,
+		channel:       channel,
 		chaincode:     chaincode,
 		count:         count,
 		workers:       workers,
@@ -29,17 +31,22 @@ func NewFabconnectRunner(user, chaincode string, count, workers int, initChainco
 }
 
 func (f *FabconnectRunner) Exec() error {
-	fmt.Println("Using Fabconnect for transaction submission")
+	log.Info("Using Fabconnect for transaction submission")
 
 	fabconnectUrl := os.Getenv("FABCONNECT_URL")
-	f.client = kaleido.NewFabconnectClient(fabconnectUrl, f.user)
-
-	err := f.client.EnsureIdentity()
+	client, err := kaleido.NewFabconnectClient(fabconnectUrl, f.user)
 	if err != nil {
-		fmt.Printf("Failed to ensure Fabconnect identity. %v\n", err)
+		log.Errorf("Failed to create Fabconnect client. %v", err)
 		return err
 	}
-	fmt.Printf("Using Fabconnect identity: %s\n", f.user)
+	f.client = client
+
+	err = f.client.EnsureIdentity()
+	if err != nil {
+		log.Errorf("Failed to ensure Fabconnect identity. %v", err)
+		return err
+	}
+	log.Infof("Using Fabconnect identity: %s", f.user)
 
 	if f.initChaincode {
 		err = f.runInitChaincode()
@@ -54,20 +61,20 @@ func (f *FabconnectRunner) Exec() error {
 }
 
 func (f *FabconnectRunner) runInitChaincode() error {
-	receiptId, err := f.client.InitChaincode(f.chaincode)
+	receiptId, err := f.client.InitChaincode(f.channel, f.chaincode)
 	if err != nil {
-		fmt.Printf("Failed to initialize chaincode: %s\n", err)
+		log.Errorf("Failed to initialize chaincode: %s", err)
 		return err
 	}
 
 	receipt, err := f.client.GetReceipt(receiptId)
 	if err != nil {
-		fmt.Printf("Failed to query receipt %s", receiptId)
+		log.Errorf("Failed to query receipt %s", receiptId)
 		return err
 	}
 
 	if receipt.Headers.Type == "TransactionSuccess" {
-		fmt.Printf("Chaincode init successful\n")
+		log.Info("Chaincode init successful")
 	}
 
 	return nil
@@ -75,78 +82,50 @@ func (f *FabconnectRunner) runInitChaincode() error {
 
 func (f *FabconnectRunner) runTransactions() error {
 	ctx := context.Background()
-	done := make(chan interface{})
-	sequence := 0
-	for ; sequence < f.workers; sequence++ {
-		worker := NewWorker(ctx, f.chaincode, sequence, done, f.client, nil)
-		worker.Start(sequence)
+	// assign each worker the transaction count
+	eventAssetIdsChan, workers := allocateWorkers(ctx, f.channel, f.chaincode, f.count, f.workers, f.client)
+
+	streamId, err := f.client.CreateEventListener(f.channel, f.chaincode)
+	if err != nil {
+		log.Errorf("Failed to create event listener. %v", err)
+		return err
+	}
+	err = f.client.StartEventClient(eventAssetIdsChan)
+	if err != nil {
+		log.Errorf("Failed to start event client. %v", err)
+		return err
 	}
 
-	var receiptIds []string
-	for {
-		receiptId := <-done
-		receiptIds = append(receiptIds, receiptId.(string))
-		if sequence < f.count {
-			worker := NewWorker(ctx, f.chaincode, sequence, done, f.client, nil)
-			worker.Start(sequence)
-			sequence++
-		} else {
-			if len(receiptIds) == f.count {
-				break
-			}
+	f.client.Start = time.Now()
+
+	// start each worker
+	for _, worker := range workers {
+		worker.Start()
+	}
+
+	assets := make(map[string]bool)
+	eventsReceived := 0
+	for eventAssetId := range eventAssetIdsChan {
+		log.Infof("Received eventAssetId: %s", eventAssetId)
+		assets[eventAssetId] = true
+		eventsReceived++
+		log.Infof("Events received: %d", eventsReceived)
+		if eventsReceived >= f.count {
+			break
 		}
 	}
 
-	fmt.Print("\nAll transactions submitted, start tracking receipts\n")
+	printFinalReport(f.count, f.workers, f.client.EventBatchSize, f.client.Start)
 
-	var receipts []*kaleido.FabconnectTransactionReceipt
-	for sequence = 0; sequence < f.workers; sequence++ {
-		worker := NewWorker(ctx, f.chaincode, sequence, done, f.client, nil)
-		worker.Track(receiptIds[sequence])
-	}
+	disableCleanup := os.Getenv("NO_CLEANUP")
 
-	for {
-		receipt := <-done
-		receipts = append(receipts, receipt.(*kaleido.FabconnectTransactionReceipt))
-		if sequence < f.count {
-			worker := NewWorker(ctx, f.chaincode, sequence, done, f.client, nil)
-			worker.Track(receiptIds[sequence])
-			sequence++
-		} else {
-			if len(receipts) == f.count {
-				break
-			}
+	if disableCleanup != "true" {
+		err = f.client.CleanupEventListener(streamId)
+		if err != nil {
+			log.Errorf("Failed to cleanup event listener. %v", err)
+			return err
 		}
 	}
-
-	f.printFinalReport(receipts)
 
 	return nil
-}
-
-func (f *FabconnectRunner) printFinalReport(receipts []*kaleido.FabconnectTransactionReceipt) {
-	fmt.Println("\n\nFinal Report")
-	totalSuccesses := 0
-	totalFailures := 0
-	maxTotalTime := 0.0
-	maxTime := 0.0
-	for i := 0; i < len(receipts); i++ {
-		tr := receipts[i]
-		if tr.Headers.Type == "TransactionSuccess" {
-			totalSuccesses++
-		} else {
-			totalFailures++
-		}
-		te := tr.Headers.TimeElapsed
-		if te > maxTime {
-			maxTime = te
-			if te > maxTotalTime {
-				maxTotalTime = te
-			}
-		}
-	}
-	fmt.Printf("  - Total program runtime: %s\n", time.Since(f.client.Start))
-	fmt.Printf("  - Total transaction successes: %d\n", totalSuccesses)
-	fmt.Printf("  - Total transaction failures: %d\n", totalFailures)
-	fmt.Printf("  - Longest transaction TimeElapsed: %f\n", maxTotalTime)
 }

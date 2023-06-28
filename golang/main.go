@@ -9,14 +9,28 @@ import (
 	"time"
 
 	"github.com/kaleido-io/kaleido-fabric-go/runners"
+	log "github.com/sirupsen/logrus"
+	prefixed "github.com/x-cray/logrus-prefixed-formatter"
 )
 
 func main() {
+	log.SetFormatter(&prefixed.TextFormatter{
+		TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
+		DisableSorting:  true,
+		ForceFormatting: true,
+		FullTimestamp:   true,
+	})
+
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	username := os.Getenv("USER_ID")
 	if username == "" {
 		username = "user1"
+	}
+
+	channel := os.Getenv("CHANNEL_ID")
+	if channel == "" {
+		channel = "default-channel"
 	}
 
 	ccname := os.Getenv("CCNAME")
@@ -55,19 +69,15 @@ func main() {
 	} else {
 		workers = 1
 	}
-	if workers > 50 {
-		fmt.Println("Error: WORKERS cannot exceed 50")
-		os.Exit(1)
-	}
 
 	init := initChaincode == "true"
 
 	useFabconnect := os.Getenv("USE_FABCONNECT")
 	if useFabconnect == "true" {
-		runner := runners.NewFabconnectRunner(username, ccname, count, workers, init)
+		runner := runners.NewFabconnectRunner(username, channel, ccname, count, workers, init)
 		_ = runner.Exec()
 	} else {
-		runner := runners.NewSDKRunner(username, ccname, count, workers, init)
+		runner := runners.NewSDKRunner(username, channel, ccname, count, workers, init)
 		_ = runner.Exec()
 	}
 
