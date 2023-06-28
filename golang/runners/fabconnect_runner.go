@@ -2,6 +2,7 @@ package runners
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
@@ -90,6 +91,11 @@ func (f *FabconnectRunner) runTransactions() error {
 		log.Errorf("Failed to create event listener. %v", err)
 		return err
 	}
+
+	// prompt the user to start the event listener
+	fmt.Printf("Check the fabconnect logs to verify it has subscribed to the events. Press enter to start the transactions...")
+	fmt.Scanln()
+
 	err = f.client.StartEventClient(eventAssetIdsChan)
 	if err != nil {
 		log.Errorf("Failed to start event client. %v", err)
