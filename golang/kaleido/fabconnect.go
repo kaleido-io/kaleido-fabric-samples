@@ -111,6 +111,10 @@ type ChainInfo struct {
 	Height int `json:"height"`
 }
 
+type ErrorMessage struct {
+	Message string `json:"error"`
+}
+
 const (
 	EVENT_LISTENER_TOPIC = "fabconnect-perf-topic-1"
 )
@@ -124,7 +128,14 @@ type FabconnectClient struct {
 }
 
 func NewFabconnectClient(fabconnectUrl, username string) (*FabconnectClient, error) {
-	r := resty.New().SetBaseURL(fabconnectUrl).SetRetryCount(10)
+	r := resty.New().SetBaseURL(fabconnectUrl).SetRetryCount(10).AddRetryCondition(func(r *resty.Response, err error) bool {
+		var errMsg ErrorMessage
+		err = json.Unmarshal(r.Body(), &errMsg)
+		if err == nil && errMsg.Message == "Too many in-flight transactions" {
+			return true
+		}
+		return false
+	})
 	conn, _, err := websocket.DefaultDialer.Dial("ws://localhost:3001/ws", nil)
 	if err != nil {
 		log.Errorf("Failed to connect to websocket. %v", err)
@@ -231,11 +242,11 @@ func (f *FabconnectClient) sendTransaction(init bool, channel, chaincodeId strin
 
 	sendTx, err := f.r.R().EnableTrace().SetBody(transactionPayload).SetResult(&transactionConfirmation).Post("/transactions?fly-sync=false")
 	if err != nil {
-		return "", fmt.Errorf(err.Error())
+		return "", fmt.Errorf("server error message: %s", err.Error())
 	}
 
 	if sendTx.StatusCode() != 202 {
-		return "", fmt.Errorf(sendTx.String())
+		return "", fmt.Errorf("unexpected status code: %s", sendTx.String())
 	}
 
 	if !sendTx.Request.TraceInfo().IsConnReused {
