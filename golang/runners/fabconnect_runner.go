@@ -102,6 +102,8 @@ func (f *FabconnectRunner) runTransactions() error {
 		return err
 	}
 
+	f.client.Start = time.Now()
+
 	// start each worker
 	for _, worker := range workers {
 		worker.Start()
@@ -109,15 +111,10 @@ func (f *FabconnectRunner) runTransactions() error {
 
 	assets := make(map[string]bool)
 	eventsReceived := 0
-	startSet := false
 	for eventAssetId := range eventAssetIdsChan {
 		log.Infof("Received eventAssetId: %s", eventAssetId)
 		assets[eventAssetId] = true
 		eventsReceived++
-		if eventsReceived >= 2500 && !startSet {
-			f.client.Start = time.Now()
-			startSet = true
-		}
 		log.Infof("Events received: %d", eventsReceived)
 		if eventsReceived >= f.count {
 			break
