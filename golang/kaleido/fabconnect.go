@@ -119,6 +119,11 @@ const (
 	EVENT_LISTENER_TOPIC = "fabconnect-perf-topic-1"
 )
 
+type TxResult struct {
+	AssetId string
+	Success bool
+}
+
 type FabconnectClient struct {
 	r              *resty.Client
 	ws             *websocket.Conn
@@ -349,7 +354,7 @@ func (f *FabconnectClient) CleanupEventListener(eventStreamId string) error {
 	return nil
 }
 
-func (f *FabconnectClient) StartEventClient(assetIdsChan chan string) error {
+func (f *FabconnectClient) StartEventClient(assetIdsChan chan TxResult) error {
 	done := make(chan struct{})
 	err := f.ws.WriteJSON(map[string]string{
 		"type":  "listen",
@@ -375,7 +380,10 @@ func (f *FabconnectClient) StartEventClient(assetIdsChan chan string) error {
 				return
 			}
 			for _, event := range events {
-				assetIdsChan <- event.Payload.AssetId
+				assetIdsChan <- TxResult{
+					AssetId: event.Payload.AssetId,
+					Success: true,
+				}
 			}
 			err = f.ws.WriteJSON(map[string]string{
 				"type":  "ack",

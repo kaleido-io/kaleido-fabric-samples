@@ -44,7 +44,7 @@ func (c *Channel) ExecChaincode(channel, chaincodeId, assetId string) (string, e
 	return c.invokeChaincode(chaincodeId, assetId)
 }
 
-func (c *Channel) SubscribeEvents(chaincodeId string, done chan string, total int) (fab.Registration, error) {
+func (c *Channel) SubscribeEvents(chaincodeId string, done chan TxResult, total int) (fab.Registration, error) {
 	reg, notifier, err := c.client.RegisterChaincodeEvent(chaincodeId, "AssetCreated")
 	if err != nil {
 		return nil, fmt.Errorf("failed to register chaincode event. %s", err)
@@ -59,7 +59,7 @@ func (c *Channel) SubscribeEvents(chaincodeId string, done chan string, total in
 				break
 			}
 		}
-		done <- "done"
+		done <- TxResult{"done", true}
 	}()
 
 	return reg, nil

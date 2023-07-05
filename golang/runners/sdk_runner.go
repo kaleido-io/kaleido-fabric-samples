@@ -73,11 +73,15 @@ func (s *SDKRunner) runTransactions() error {
 	// assign each worker the transaction count
 	done, workers := allocateWorkers(ctx, s.channel, s.chaincode, s.count, s.workers, s.channelClient)
 
-	// subscribe to events
-	reg, err := s.channelClient.SubscribeEvents(s.chaincode, done, s.count)
-	if err != nil {
-		log.Errorf("Failed to subscribe to events: %s", err)
-		return err
+	useEvents := os.Getenv("USE_EVENTS")
+	if useEvents == "true" {
+		// subscribe to events
+		reg, err := s.channelClient.SubscribeEvents(s.chaincode, done, s.count)
+		if err != nil {
+			log.Errorf("Failed to subscribe to events: %s", err)
+			return err
+		}
+		defer s.channelClient.UnsubscribeEvents(reg)
 	}
 
 	s.channelClient.Start = time.Now()
@@ -88,8 +92,6 @@ func (s *SDKRunner) runTransactions() error {
 	}
 
 	<-done
-
-	defer s.channelClient.UnsubscribeEvents(reg)
 
 	printFinalReport(s.count, s.workers, 1, s.channelClient.Start)
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/kaleido-io/kaleido-fabric-go/kaleido"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -28,11 +29,11 @@ type worker struct {
 	index        int
 	txCount      int
 	ctx          context.Context
-	eventAssetId chan string
+	eventAssetId chan kaleido.TxResult
 	client       FabricClient
 }
 
-func NewWorker(ctx context.Context, channel, ccname string, index int, eventAssetId chan string) Worker {
+func NewWorker(ctx context.Context, channel, ccname string, index int, eventAssetId chan kaleido.TxResult) Worker {
 	w := &worker{
 		channel:      channel,
 		chaincode:    ccname,
@@ -55,15 +56,18 @@ func (w *worker) Start() {
 		for i := 0; i < w.txCount; i++ {
 			newId, err := generateId()
 			if err != nil {
-				return
+				log.Errorf("[worker:%d] Failed to generate asset ID. %s", w.index, err)
+				panic(err)
 			}
 			assetId := fmt.Sprintf("asset-%s", newId)
 			log.Infof("[worker:%d] Send transaction %d of %d (%s)", w.index, i+1, w.txCount, assetId)
 			id, err := w.client.ExecChaincode(w.channel, w.chaincode, assetId)
 			if err != nil {
 				log.Errorf("[worker:%d] Failed to send transaction %d of %d (%s). %s", w.index, i+1, w.txCount, assetId, err)
+				w.eventAssetId <- kaleido.TxResult{AssetId: assetId, Success: false}
 			} else {
 				log.Infof("[worker:%d] Transaction %d of %d (%s) sent. Asset ID: %s", w.index, i+1, w.txCount, assetId, id)
+				w.eventAssetId <- kaleido.TxResult{AssetId: assetId, Success: true}
 			}
 		}
 	}()
@@ -109,8 +113,8 @@ func generateId() (string, error) {
 	return base32.HexEncoding.EncodeToString(randomBytes)[:10], nil
 }
 
-func allocateWorkers(ctx context.Context, channel, chaincode string, txCount, numWorkers int, client FabricClient) (chan string, []Worker) {
-	eventAssetIdsChan := make(chan string)
+func allocateWorkers(ctx context.Context, channel, chaincode string, txCount, numWorkers int, client FabricClient) (chan kaleido.TxResult, []Worker) {
+	eventAssetIdsChan := make(chan kaleido.TxResult)
 	sequence := 0
 	workers := make([]Worker, numWorkers)
 	for ; sequence < numWorkers; sequence++ {

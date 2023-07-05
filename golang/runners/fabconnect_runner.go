@@ -86,20 +86,25 @@ func (f *FabconnectRunner) runTransactions() error {
 	// assign each worker the transaction count
 	eventAssetIdsChan, workers := allocateWorkers(ctx, f.channel, f.chaincode, f.count, f.workers, f.client)
 
-	streamId, err := f.client.CreateEventListener(f.channel, f.chaincode)
-	if err != nil {
-		log.Errorf("Failed to create event listener. %v", err)
-		return err
-	}
+	var streamId string
+	useEvents := os.Getenv("USE_EVENTS")
+	if useEvents == "true" {
+		stream, err := f.client.CreateEventListener(f.channel, f.chaincode)
+		if err != nil {
+			log.Errorf("Failed to create event listener. %v", err)
+			return err
+		}
+		streamId = stream
 
-	// prompt the user to start the event listener
-	fmt.Printf("Check the fabconnect logs to verify it has subscribed to the events. Press enter to start the transactions...")
-	fmt.Scanln()
+		// prompt the user to start the event listener
+		fmt.Printf("Check the fabconnect logs to verify it has subscribed to the events. Press enter to start the transactions...")
+		fmt.Scanln()
 
-	err = f.client.StartEventClient(eventAssetIdsChan)
-	if err != nil {
-		log.Errorf("Failed to start event client. %v", err)
-		return err
+		err = f.client.StartEventClient(eventAssetIdsChan)
+		if err != nil {
+			log.Errorf("Failed to start event client. %v", err)
+			return err
+		}
 	}
 
 	f.client.Start = time.Now()
@@ -110,13 +115,17 @@ func (f *FabconnectRunner) runTransactions() error {
 	}
 
 	assets := make(map[string]bool)
-	eventsReceived := 0
-	for eventAssetId := range eventAssetIdsChan {
-		log.Infof("Received eventAssetId: %s", eventAssetId)
-		assets[eventAssetId] = true
-		eventsReceived++
-		log.Infof("Events received: %d", eventsReceived)
-		if eventsReceived >= f.count {
+	successfulTx := 0
+	failedTx := 0
+	for txResult := range eventAssetIdsChan {
+		log.Infof("Received Asset Id from tx: %s", txResult.AssetId)
+		assets[txResult.AssetId] = txResult.Success
+		if txResult.Success {
+			successfulTx++
+		} else {
+			failedTx++
+		}
+		if len(assets) == f.count {
 			break
 		}
 	}
@@ -125,8 +134,8 @@ func (f *FabconnectRunner) runTransactions() error {
 
 	disableCleanup := os.Getenv("NO_CLEANUP")
 
-	if disableCleanup != "true" {
-		err = f.client.CleanupEventListener(streamId)
+	if disableCleanup != "true" && streamId != "" {
+		err := f.client.CleanupEventListener(streamId)
 		if err != nil {
 			log.Errorf("Failed to cleanup event listener. %v", err)
 			return err
