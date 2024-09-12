@@ -38,30 +38,34 @@ async function main() {
     } else {
       isInit = prompt('Calling "InitLedger" (y/n)? ');
     }
-    for (let i = 0; i < 1000; i++) {
-      let fcn, args;
+    let NUM_ITERATIONS = process.env.NUM_ITERATIONS ? parseInt(process.env.NUM_ITERATIONS) : 1000;
+    for (let i = 0; i < NUM_ITERATIONS; i++) {
+      let fcn, args, assetId;
       if (isInit === 'y') {
+        // Initialize a set of asset data on the channel using the chaincode 'InitLedger' function.
         fcn = 'InitLedger';
         args = [];
+        isInit = 'n'
       } else {
+        // Create an asset on the channel using the chaincode 'CreateAsset' function
         fcn = 'CreateAsset';
-        const assetId = `asset-${Math.floor(Math.random() * 1000000)}`;
+        assetId = `asset-${Math.floor(Math.random() * 1000000)}`;
         console.log(`Generating a random asset ID to use to create a new asset: ${assetId}`);
         args = [assetId, "yellow", "5", "Tom", "1300"];
+      }
+      console.log(`\n--> Submitting Transaction. fcn: ${fcn}, args: ${args}`);
+      await contract.submitTransaction(fcn, ...args);
+      console.log('*** Result: committed');
 
-        // Initialize a set of asset data on the channel using the chaincode 'InitLedger' function.
-        console.log(`\n--> Submitting Transaction. fcn: ${fcn}, args: ${args}`);
-        await contract.submitTransaction(fcn, ...args);
-        console.log('*** Result: committed');
-
+      if (process.env.EVALUATE_TRANSACTIONS && assetId) {
         // Read just created asset from the channel using the 'ReadAsset' chaincode function
-        // fcn = 'ReadAsset';
-        // console.log(`Reading asset with ID: ${assetId}`);
-        // args = [assetId];
-
-        // console.log(`--> Evaluating Transaction. fcn: ${fcn}, args: ${args}`);
-        // const blockchainResponse = await contract.evaluateTransaction(fcn, ...args);
-        // console.log(`*** Result: ${blockchainResponse}`);
+        fcn = 'ReadAsset';
+        console.log(`Reading asset with ID: ${assetId}`);
+        args = [assetId];
+  
+        console.log(`--> Evaluating Transaction. fcn: ${fcn}, args: ${args}`);
+        const blockchainResponse = await contract.evaluateTransaction(fcn, ...args);
+        console.log(`*** Result: ${blockchainResponse}`);
       }
     }
   } catch (error) {
