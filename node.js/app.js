@@ -32,40 +32,41 @@ async function main() {
     const network = await gateway.getNetwork(kclient.channel.name);
     const contract = network.getContract(chaincodeName);
 
-    let isInit;
-    if (process.env.IS_INIT) {
-      isInit = process.env.IS_INIT;
+    
+    if (process.env.LIST_ASSETS) {
+      // The current chaincode sample has no method for retrieving single assets
+      // This branch allows for a one-off listing of all assets from the contract
+      console.log(`Reading all assets`);
+      let fcn = 'GetAllAssets';
+      let args = [];
+      console.log(`--> Evaluating Transaction. fcn: ${fcn}, args: ${args}`);
+      const blockchainResponse = await contract.evaluateTransaction(fcn, ...args);
+      console.log(`*** Result: ${blockchainResponse}`);
     } else {
-      isInit = prompt('Calling "InitLedger" (y/n)? ');
-    }
-    let NUM_ITERATIONS = process.env.NUM_ITERATIONS ? parseInt(process.env.NUM_ITERATIONS) : 1000;
-    for (let i = 0; i < NUM_ITERATIONS; i++) {
-      let fcn, args, assetId;
-      if (isInit === 'y') {
-        // Initialize a set of asset data on the channel using the chaincode 'InitLedger' function.
-        fcn = 'InitLedger';
-        args = [];
-        isInit = 'n'
+      let isInit;
+      if (process.env.IS_INIT) {
+        isInit = process.env.IS_INIT;
       } else {
-        // Create an asset on the channel using the chaincode 'CreateAsset' function
-        fcn = 'CreateAsset';
-        assetId = `asset-${Math.floor(Math.random() * 1000000)}`;
-        console.log(`Generating a random asset ID to use to create a new asset: ${assetId}`);
-        args = [assetId, "yellow", "5", "Tom", "1300"];
+        isInit = prompt('Calling "InitLedger" (y/n)? ');
       }
-      console.log(`\n--> Submitting Transaction. fcn: ${fcn}, args: ${args}`);
-      await contract.submitTransaction(fcn, ...args);
-      console.log('*** Result: committed');
-
-      if (process.env.EVALUATE_TRANSACTIONS && assetId) {
-        // Read just created asset from the channel using the 'ReadAsset' chaincode function
-        fcn = 'ReadAsset';
-        console.log(`Reading asset with ID: ${assetId}`);
-        args = [assetId];
-  
-        console.log(`--> Evaluating Transaction. fcn: ${fcn}, args: ${args}`);
-        const blockchainResponse = await contract.evaluateTransaction(fcn, ...args);
-        console.log(`*** Result: ${blockchainResponse}`);
+      let NUM_ITERATIONS = process.env.NUM_ITERATIONS ? parseInt(process.env.NUM_ITERATIONS) : 1000;
+      for (let i = 0; i < NUM_ITERATIONS; i++) {
+        let fcn, args, assetId;
+        if (i === 0 && isInit === 'y') {
+          // Initialize a set of asset data on the channel using the chaincode 'InitLedger' function.
+          fcn = 'InitLedger';
+          args = [];
+          isInit = 'n'
+        } else {
+          // Create an asset on the channel using the chaincode 'CreateAsset' function
+          fcn = 'CreateAsset';
+          assetId = `asset-${Math.floor(Math.random() * 1000000)}`;
+          console.log(`Generating a random asset ID to use to create a new asset: ${assetId}`);
+          args = [assetId, "yellow", "5", "Tom", "1300"];
+        }
+        console.log(`\n--> Submitting Transaction. fcn: ${fcn}, args: ${args}`);
+        await contract.submitTransaction(fcn, ...args);
+        console.log('*** Result: committed');
       }
     }
   } catch (error) {
