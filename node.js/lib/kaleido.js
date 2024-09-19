@@ -81,8 +81,12 @@ class KaleidoClient {
       for (let network of result.data) {
         console.log(`\t[${i++}] id: ${network._id}, name: ${network.name}`);
       }
-      const consortiumId = prompt("Select target consortium: ");
-      consortium = result.data[consortiumId]._id;
+      if (process.env.CONSORTIUM) {
+        consortium = process.env.CONSORTIUM;
+      } else {
+          const consortiumId = prompt('Select target consortium: ');
+          consortium = result.data[consortiumId]._id;
+      }
     } else {
       console.log(
         `Found business network "${result.data[0].name}" (${result.data[0]._id})`
@@ -146,8 +150,12 @@ class KaleidoClient {
       for (let network of result.data) {
         console.log(`\t[${i++}] id: ${network._id}, name: ${network.name}`);
       }
-      const environmentId = prompt("Select target environment: ");
-      env = result.data[environmentId]._id;
+      if (process.env.ENVIRONMENT) {
+        env = process.env.ENVIRONMENT;
+      } else {
+        const environmentId = prompt('Select target environment: ');
+        env = result.data[environmentId]._id;
+      }
     } else {
       console.log(
         `Found environment "${result.data[0].name}" (${result.data[0]._id})`
@@ -343,6 +351,9 @@ class KaleidoClient {
     }
     for (let membership of memberships) {
       const membershipId = membership._id;
+      if (membership.org_name === 'Default Organization') {
+        continue;
+      }
       config.organizations[membershipId] = {
         mspid: membershipId,
         peers: this.peers
